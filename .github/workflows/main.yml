@@ -25,5 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+      - name: Install translations
 	run: node generate_translations.js
+      - name: Build
 	run: pnpm build:prod
