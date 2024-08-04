@@ -27,5 +27,7 @@ jobs:
         run: pnpm install
       - name: Show translations
         run: ls lemmy-translations
+      - name: Test ls
+        run: ls src
       - name: Build
         run: pnpm build:prod
