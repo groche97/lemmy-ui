@@ -14,7 +14,7 @@ export const sortingHelpUrl = `${joinLemmyUrl}/docs/en/users/03-votes-and-rankin
 export const archiveTodayUrl = "https://archive.today";
 export const ghostArchiveUrl = "https://ghostarchive.org";
 export const webArchiveUrl = "https://web.archive.org";
-export const elementUrl = "https://element.io";
+export const matrixUrl = "https://matrix.org/try-matrix/";
 
 export const postRefetchSeconds: number = 60 * 1000;
 export const mentionDropdownFetchLimit = 10;
@@ -43,10 +43,14 @@ const queryPairRegex = "[a-zA-Zd_-]+=[a-zA-Zd+-_]+";
  * /c/community@server.com
  * /m/community@server.com
  * /u/username@server.com
+ * @username@server.com
  */
 export const instanceLinkRegex = new RegExp(
-  `(/[cmu]/|!)[a-zA-Z\\d._%+-]+@[a-zA-Z\\d.-]+\\.[a-zA-Z]{2,}(?:/?\\?${queryPairRegex}(?:&${queryPairRegex})*)?`,
+  `(/[cmu]/|!|@)[a-zA-Z\\d._%+-]+@[a-zA-Z\\d.-]+\\.[a-zA-Z]{2,}(?:/?\\?${queryPairRegex}(?:&${queryPairRegex})*)?`,
   "g",
 );
 
 export const testHost = "0.0.0.0:8536";
+
+export const validActorRegexPattern =
+  "^\\w+|[\\p{Script=Arabic}\\d_]+|[\\p{Script=Cyrillic}\\d_]+$";

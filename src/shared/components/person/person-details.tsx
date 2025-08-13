@@ -37,8 +37,10 @@ import {
   RemovePost,
   SaveComment,
   SavePost,
-  SortType,
+  PostSortType,
   TransferCommunity,
+  GetCommentsResponse,
+  GetPostsResponse,
 } from "lemmy-js-client";
 import { CommentViewType, PersonDetailsView } from "../../interfaces";
 import { CommentNodes } from "../comment/comment-nodes";
@@ -48,12 +50,14 @@ import { RequestState } from "../../services/HttpService";
 
 interface PersonDetailsProps {
   personRes: GetPersonDetailsResponse;
+  likedCommentsRes?: GetCommentsResponse;
+  likedPostsRes?: GetPostsResponse;
   admins: PersonView[];
   allLanguages: Language[];
   siteLanguages: number[];
   page: number;
   limit: number;
-  sort: SortType;
+  sort: PostSortType;
   enableDownvotes: boolean;
   voteDisplayMode: LocalUserVoteDisplayMode;
   enableNsfw: boolean;
@@ -120,7 +124,16 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             (this.props.view === PersonDetailsView.Comments &&
               this.props.limit > this.props.personRes.comments.length) ||
             (this.props.view === PersonDetailsView.Posts &&
-              this.props.limit > this.props.personRes.posts.length)
+              this.props.limit > this.props.personRes.posts.length) ||
+            ((this.props.view === PersonDetailsView.Overview ||
+              this.props.view === PersonDetailsView.Saved) &&
+              this.props.limit > this.props.personRes.posts.length &&
+              this.props.limit > this.props.personRes.comments.length) ||
+            (this.props.view === PersonDetailsView.Upvoted &&
+              this.props.likedCommentsRes !== undefined &&
+              this.props.limit > this.props.likedCommentsRes.comments.length &&
+              this.props.likedPostsRes !== undefined &&
+              this.props.limit > this.props.likedPostsRes.posts.length)
           }
         />
       </div>
@@ -137,6 +150,8 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
       return this.comments();
     } else if (view === PersonDetailsView.Posts) {
       return this.posts();
+    } else if (view === PersonDetailsView.Upvoted) {
+      return this.upvoted();
     } else {
       return null;
     }
@@ -330,6 +345,49 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             <hr className="my-3" />
           </>
         ))}
+      </div>
+    );
+  }
+
+  upvoted() {
+    let id = 0;
+    const comments: ItemType[] = this.props.likedCommentsRes
+      ? this.props.likedCommentsRes.comments.map(r => ({
+          id: id++,
+          type_: ItemEnum.Comment,
+          view: r,
+          published: r.comment.published,
+          score: r.counts.score,
+        }))
+      : [];
+    const posts: ItemType[] = this.props.likedPostsRes
+      ? this.props.likedPostsRes.posts.map(r => ({
+          id: id++,
+          type_: ItemEnum.Post,
+          view: r,
+          published: r.post.published,
+          score: r.counts.score,
+        }))
+      : [];
+
+    const combined = [...comments, ...posts];
+
+    // Sort it
+    if (this.props.sort === "New") {
+      combined.sort((a, b) => b.published.localeCompare(a.published));
+    } else if (this.props.sort === "Old") {
+      combined.sort((a, b) => b.published.localeCompare(a.published));
+      combined.reverse();
+    } else {
+      combined.sort((a, b) => Number(b.score - a.score));
+    }
+
+    return (
+      <div>
+        {combined.map(i => [
+          this.renderItemType(i),
+          <hr key={i.type_} className="my-3" />,
+        ])}
       </div>
     );
   }

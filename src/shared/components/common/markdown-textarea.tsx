@@ -4,6 +4,7 @@ import autosize from "autosize";
 import classNames from "classnames";
 import { NoOptionI18nKeys } from "i18next";
 import { Component, linkEvent } from "inferno";
+import { createElement } from "inferno-create-element";
 import { Prompt } from "inferno-router";
 import { Language } from "lemmy-js-client";
 import {
@@ -52,6 +53,7 @@ interface MarkdownTextAreaProps {
   onSubmit?(content: string, languageId?: number): Promise<boolean>;
   allLanguages: Language[]; // TODO should probably be nullable
   siteLanguages: number[]; // TODO same
+  renderAsDiv?: boolean;
 }
 
 interface ImageUploadStatus {
@@ -114,13 +116,16 @@ export class MarkdownTextArea extends Component<
 
   render() {
     const languageId = this.state.languageId;
-
-    return (
-      <form
-        className="markdown-textarea"
-        id={this.formId}
-        onSubmit={linkEvent(this, this.handleSubmit)}
-      >
+    return createElement(
+      this.props.renderAsDiv ? "div" : "form",
+      {
+        className: "markdown-textarea",
+        id: this.formId,
+        onSubmit: this.props.renderAsDiv
+          ? undefined
+          : linkEvent(this, this.handleSubmit),
+      },
+      <>
         <Prompt
           message={I18NextService.i18n.t("block_leaving")}
           when={
@@ -223,6 +228,7 @@ export class MarkdownTextArea extends Component<
                     this.props.maxLength ?? markdownFieldCharacterLimit
                   }
                   placeholder={this.props.placeholder}
+                  spellCheck
                 />
                 {this.state.previewMode && this.state.content && (
                   <div
@@ -256,29 +262,14 @@ export class MarkdownTextArea extends Component<
           </div>
 
           <div className="col-12 d-flex align-items-center flex-wrap mt-2">
-            {this.props.showLanguage && (
-              <LanguageSelect
-                iconVersion
-                allLanguages={this.props.allLanguages}
-                selectedLanguageIds={
-                  languageId ? Array.of(languageId) : undefined
-                }
-                siteLanguages={this.props.siteLanguages}
-                onChange={this.handleLanguageChange}
-                disabled={this.isDisabled}
-              />
-            )}
-
-            {/* A flex expander */}
-            <div className="flex-grow-1"></div>
-
-            {this.props.replyType && (
+            {this.props.buttonTitle && (
               <button
-                type="button"
+                type="submit"
                 className="btn btn-sm btn-secondary ms-2"
-                onClick={linkEvent(this, this.handleReplyCancel)}
+                disabled={this.isDisabled || !this.state.content}
               >
-                {I18NextService.i18n.t("cancel")}
+                {this.state.loading && <Spinner className="me-1" />}
+                {this.props.buttonTitle}
               </button>
             )}
             <button
@@ -293,19 +284,34 @@ export class MarkdownTextArea extends Component<
                 ? I18NextService.i18n.t("edit")
                 : I18NextService.i18n.t("preview")}
             </button>
-            {this.props.buttonTitle && (
+            {this.props.replyType && (
               <button
-                type="submit"
+                type="button"
                 className="btn btn-sm btn-secondary ms-2"
-                disabled={this.isDisabled || !this.state.content}
+                onClick={linkEvent(this, this.handleReplyCancel)}
               >
-                {this.state.loading && <Spinner className="me-1" />}
-                {this.props.buttonTitle}
+                {I18NextService.i18n.t("cancel")}
               </button>
+            )}
+
+            {/* A flex expander */}
+            <div className="flex-grow-1"></div>
+
+            {this.props.showLanguage && (
+              <LanguageSelect
+                iconVersion
+                allLanguages={this.props.allLanguages}
+                selectedLanguageIds={
+                  languageId ? Array.of(languageId) : undefined
+                }
+                siteLanguages={this.props.siteLanguages}
+                onChange={this.handleLanguageChange}
+                disabled={this.isDisabled}
+              />
             )}
           </div>
         </div>
-      </form>
+      </>,
     );
   }
 
@@ -459,12 +465,29 @@ export class MarkdownTextArea extends Component<
     if (res.state === "success") {
       if (res.data.msg === "ok") {
         const imageMarkdown = `![](${res.data.url})`;
-        i.setState(({ content }) => ({
-          content: content ? `${content}\n${imageMarkdown}` : imageMarkdown,
-        }));
+        const textarea: HTMLTextAreaElement = document.getElementById(
+          i.id,
+        ) as HTMLTextAreaElement;
+        const cursorPosition = textarea.selectionStart;
+
+        i.setState(({ content }) => {
+          const currentContent = content || "";
+          return {
+            content:
+              currentContent.slice(0, cursorPosition) +
+              imageMarkdown +
+              currentContent.slice(cursorPosition),
+          };
+        });
+
         i.contentChange();
-        const textarea: any = document.getElementById(i.id);
-        autosize.update(textarea);
+        // Update cursor position to after the inserted image link
+        setTimeout(() => {
+          textarea.selectionStart = cursorPosition + imageMarkdown.length;
+          textarea.selectionEnd = cursorPosition + imageMarkdown.length;
+          autosize.update(textarea);
+        }, 10);
+
         pictrsDeleteToast(image.name, res.data.delete_url as string);
       } else if (res.data.msg === "too_large") {
         toast(I18NextService.i18n.t("upload_too_large"), "danger");
@@ -475,8 +498,8 @@ export class MarkdownTextArea extends Component<
       }
     } else if (res.state === "failed") {
       i.setState({ imageUploadStatus: undefined });
-      console.error(res.err.message);
-      toast(res.err.message, "danger");
+      console.error(res.err.name);
+      toast(res.err.name, "danger");
 
       throw res.err;
     }

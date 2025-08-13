@@ -100,6 +100,7 @@ const locales: DateFnsDesc[] = [
   { resource: "uz", code: "uz" },
   { resource: "uz-Cyrl", code: "uz-Cyrl" },
   { resource: "vi", code: "vi" },
+  { resource: "zh-CN", code: "zh" },
   { resource: "zh-CN", code: "zh-CN" },
   { resource: "zh-HK", code: "zh-HK" },
   { resource: "zh-TW", code: "zh-TW" },
@@ -136,7 +137,7 @@ function langToLocale(lang: string): DateFnsDesc | undefined {
 async function load(locale: DateFnsDesc): Promise<Locale> {
   return import(
     /* webpackChunkName: `date-fns-[request]` */
-    `date-fns/locale/${locale.resource}.mjs`
+    `date-fns/locale/${locale.resource}.js`
   ).then(x => x.default);
 }
 
@@ -184,7 +185,7 @@ export function findDateFnsChunkNames(languages: readonly string[]): string[] {
   if (locale.bundled) {
     return [];
   }
-  return [`date-fns-${locale.resource}-mjs`];
+  return [`date-fns-${locale.resource}-js`];
 }
 
 export default async function () {

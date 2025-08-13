@@ -14,9 +14,11 @@ import {
 import ActionButton from "./action-button";
 import classNames from "classnames";
 import { Link } from "inferno-router";
-import ConfirmationModal from "../confirmation-modal";
-import ViewVotesModal from "../view-votes-modal";
-import ModActionFormModal, { BanUpdateForm } from "../mod-action-form-modal";
+import ConfirmationModal from "../modal/confirmation-modal";
+import ViewVotesModal from "../modal/view-votes-modal";
+import ModActionFormModal, {
+  BanUpdateForm,
+} from "../modal/mod-action-form-modal";
 import { BanType, CommentNodeView, PurgeType } from "../../../interfaces";
 import { getApubName, hostname } from "@utils/helpers";
 import { tippyMixin } from "../../mixins/tippy-mixin";
@@ -193,7 +195,7 @@ export default class ContentActionDropdown extends Component<
         <ActionButton
           onClick={onSave}
           inline
-          icon="star"
+          icon="bookmark"
           label={I18NextService.i18n.t(saved ? "unsave" : "save")}
           iconClass={classNames({ "text-warning": saved })}
         />
@@ -284,21 +286,19 @@ export default class ContentActionDropdown extends Component<
                     </li>
                   </>
                 )}
-                {amAdmin() && (
-                  <li>
-                    <ActionButton
-                      onClick={this.toggleViewVotesShow}
-                      label={I18NextService.i18n.t("view_votes")}
-                      icon={"arrow-up"}
-                      noLoading
-                    />
-                  </li>
-                )}
 
                 {(amMod(community.id) || amAdmin()) && (
                   <>
                     <li>
                       <hr className="dropdown-divider" />
+                    </li>
+                    <li>
+                      <ActionButton
+                        onClick={this.toggleViewVotesShow}
+                        label={I18NextService.i18n.t("view_votes")}
+                        icon={"arrow-up"}
+                        noLoading
+                      />
                     </li>
                     {type === "post" && (
                       <>

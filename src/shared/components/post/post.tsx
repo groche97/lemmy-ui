@@ -124,11 +124,12 @@ interface PostState {
   lastCreatedCommentId?: CommentId;
 }
 
-const defaultCommentSort: CommentSortType = "Hot";
-
-function getCommentSortTypeFromQuery(source?: string): CommentSortType {
+function getCommentSortTypeFromQuery(
+  source: string | undefined,
+  fallback: CommentSortType,
+): CommentSortType {
   if (!source) {
-    return defaultCommentSort;
+    return fallback;
   }
   switch (source) {
     case "Hot":
@@ -138,14 +139,21 @@ function getCommentSortTypeFromQuery(source?: string): CommentSortType {
     case "Controversial":
       return source;
     default:
-      return defaultCommentSort;
+      return fallback;
   }
 }
 
 function getQueryStringFromCommentSortType(
   sort: CommentSortType,
+  siteRes: GetSiteResponse,
 ): undefined | string {
-  if (sort === defaultCommentSort) {
+  const myUserInfo = siteRes.my_user ?? UserService.Instance.myUserInfo;
+  const local_user = myUserInfo?.local_user_view.local_user;
+  const local_site = siteRes.site_view.local_site;
+  const defaultSort =
+    local_user?.default_comment_sort_type ??
+    local_site.default_comment_sort_type;
+  if (sort === defaultSort) {
     return undefined;
   }
   return sort;
@@ -185,14 +193,31 @@ interface PostProps {
   view: CommentViewType;
   scrollToComments: boolean;
 }
-export function getPostQueryParams(source: string | undefined): PostProps {
-  return getQueryParams<PostProps>(
+
+type Fallbacks = {
+  sort: CommentSortType;
+};
+
+export function getPostQueryParams(
+  source: string | undefined,
+  siteRes: GetSiteResponse,
+): PostProps {
+  const myUserInfo = siteRes.my_user ?? UserService.Instance.myUserInfo;
+  const local_user = myUserInfo?.local_user_view.local_user;
+  const local_site = siteRes.site_view.local_site;
+
+  return getQueryParams<PostProps, Fallbacks>(
     {
       scrollToComments: (s?: string) => !!s,
       sort: getCommentSortTypeFromQuery,
       view: getCommentViewTypeFromQuery,
     },
     source,
+    {
+      sort:
+        local_user?.default_comment_sort_type ??
+        local_site.default_comment_sort_type,
+    },
   );
 }
 
@@ -325,7 +350,7 @@ export class Post extends Component<PostRouteProps, PostState> {
     };
 
     const query: QueryParams<PostProps> = {
-      sort: getQueryStringFromCommentSortType(sort),
+      sort: getQueryStringFromCommentSortType(sort, this.state.siteRes),
       view: getQueryStringFromCommentView(view),
     };
 
@@ -336,9 +361,9 @@ export class Post extends Component<PostRouteProps, PostState> {
 
     let pathname: string | undefined;
     if (comment_id && post_id) {
-      pathname = `/post/${post_id}/${comment_id}`;
+      pathname = `/post/${post_id}/${comment_id}#comment-${comment_id}`;
     } else if (comment_id) {
-      pathname = `/comment/${comment_id}`;
+      pathname = `/comment/${comment_id}#comment-${comment_id}`;
     } else {
       pathname = `/post/${post_id}`;
     }
@@ -537,7 +562,7 @@ export class Post extends Component<PostRouteProps, PostState> {
         const siteRes = this.state.siteRes;
         return (
           <div className="row">
-            <main className="col-12 col-md-8 col-lg-9 mb-3">
+            <div className="col-12 col-md-8 col-lg-9 mb-3">
               <HtmlTags
                 title={this.documentTitle}
                 path={this.context.router.route.match.url}
@@ -618,7 +643,7 @@ export class Post extends Component<PostRouteProps, PostState> {
               {this.sortRadios()}
               {this.props.view === CommentViewType.Tree && this.commentsTree()}
               {this.props.view === CommentViewType.Flat && this.commentsFlat()}
-            </main>
+            </div>
             <aside className="d-none d-md-block col-md-4 col-lg-3">
               {this.sidebar()}
             </aside>
@@ -1391,7 +1416,7 @@ export class Post extends Component<PostRouteProps, PostState> {
       return s;
     });
     if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.message), "danger");
+      toast(I18NextService.i18n.t(res.err.name), "danger");
     }
   }
 
@@ -1406,7 +1431,7 @@ export class Post extends Component<PostRouteProps, PostState> {
       return s;
     });
     if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.message), "danger");
+      toast(I18NextService.i18n.t(res.err.name), "danger");
     }
   }
 
@@ -1421,7 +1446,7 @@ export class Post extends Component<PostRouteProps, PostState> {
       return s;
     });
     if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.message), "danger");
+      toast(I18NextService.i18n.t(res.err.name), "danger");
     }
   }
 
@@ -1436,7 +1461,7 @@ export class Post extends Component<PostRouteProps, PostState> {
       return s;
     });
     if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.message), "danger");
+      toast(I18NextService.i18n.t(res.err.name), "danger");
     }
   }
 

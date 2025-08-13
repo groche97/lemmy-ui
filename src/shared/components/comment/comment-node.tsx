@@ -2,7 +2,7 @@ import { colorList, getCommentParentId } from "@utils/app";
 import { futureDaysToUnixTime, numToSI } from "@utils/helpers";
 import classNames from "classnames";
 import { isBefore, parseISO, subMinutes } from "date-fns";
-import { Component, linkEvent } from "inferno";
+import { Component, InfernoMouseEvent, linkEvent } from "inferno";
 import { Link } from "inferno-router";
 import {
   AddAdmin,
@@ -51,7 +51,7 @@ import { CommunityLink } from "../community/community-link";
 import { PersonListing } from "../person/person-listing";
 import { CommentForm } from "./comment-form";
 import { CommentNodes } from "./comment-nodes";
-import { BanUpdateForm } from "../common/mod-action-form-modal";
+import { BanUpdateForm } from "../common/modal/mod-action-form-modal";
 import CommentActionDropdown from "../common/content-actions/comment-action-dropdown";
 import { RequestState } from "../../services/HttpService";
 import { VoteDisplay } from "../common/vote-display";
@@ -199,12 +199,18 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
           })}
         >
           <div className="ms-2">
-            <div className="d-flex flex-wrap align-items-center text-muted small">
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
+            <div
+              className="d-flex flex-wrap align-items-center text-muted small"
+              onClick={linkEvent(this, this.handleCommentCollapse)}
+              role="group"
+            >
               <button
                 className="btn btn-sm btn-link text-muted me-2"
                 onClick={linkEvent(this, this.handleCommentCollapse)}
                 aria-label={this.expandText}
                 data-tippy-content={this.expandText}
+                aria-pressed={this.state.collapsed ? "true" : "false"}
               >
                 <Icon
                   icon={`${this.state.collapsed ? "plus" : "minus"}-square`}
@@ -224,6 +230,8 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
                 isMod={creator_is_moderator}
                 isAdmin={creator_is_admin}
                 isBot={cv.creator.bot_account}
+                isBanned={cv.creator.banned}
+                isBannedFromCommunity={cv.creator_banned_from_community}
               />
 
               {this.props.showCommunity && (
@@ -383,7 +391,7 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
             className={classNames("details ms-1 comment-node py-2", {
               "border-top border-light": !this.props.noBorder,
             })}
-            style={`border-left: 2px ${moreRepliesBorderColor} solid !important`}
+            style={`border-left: var(--comment-border-width) ${moreRepliesBorderColor} solid !important`}
           >
             <button
               className="btn btn-link text-muted"
@@ -479,21 +487,21 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
       ? I18NextService.i18n.t("show_context")
       : I18NextService.i18n.t("link");
 
+    const commentId =
+      (this.props.showContext && getCommentParentId(cv.comment)) ||
+      cv.comment.id;
     return (
       <>
         <Link
           className={classnames}
-          to={`/post/${cv.post.id}/${
-            (this.props.showContext && getCommentParentId(cv.comment)) ||
-            cv.comment.id
-          }`}
+          to={`/post/${cv.post.id}/${commentId}#comment-${commentId}`}
           title={title}
         >
           <Icon icon="link" classes="icon-inline" />
         </Link>
         <a
           className={classnames}
-          title={I18NextService.i18n.t("link")}
+          title={I18NextService.i18n.t("fedilink")}
           href={cv.comment.ap_id}
         >
           <Icon icon="fedilink" classes="icon-inline" />
@@ -574,7 +582,8 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
     return isBefore(now, then);
   }
 
-  handleCommentCollapse(i: CommentNode) {
+  handleCommentCollapse(i: CommentNode, event: InfernoMouseEvent<any>) {
+    event.stopPropagation();
     i.setState({ collapsed: !i.state.collapsed });
   }
 
@@ -637,7 +646,7 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
   async handleBanFromCommunity({
     daysUntilExpires,
     reason,
-    shouldRemove,
+    shouldRemoveOrRestoreData,
   }: BanUpdateForm) {
     const {
       creator: { id: person_id },
@@ -646,10 +655,9 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
     } = this.commentView;
 
     const ban = !creator_banned_from_community;
-
     // If its an unban, restore all their data
     if (ban === false) {
-      shouldRemove = false;
+      shouldRemoveOrRestoreData = true;
     }
     const expires = futureDaysToUnixTime(daysUntilExpires);
 
@@ -657,7 +665,7 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
       community_id,
       person_id,
       ban,
-      remove_data: shouldRemove,
+      remove_or_restore_data: shouldRemoveOrRestoreData,
       reason,
       expires,
     });
@@ -666,7 +674,7 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
   async handleBanFromSite({
     daysUntilExpires,
     reason,
-    shouldRemove,
+    shouldRemoveOrRestoreData,
   }: BanUpdateForm) {
     const {
       creator: { id: person_id, banned },
@@ -676,14 +684,14 @@ export class CommentNode extends Component<CommentNodeProps, CommentNodeState> {
 
     // If its an unban, restore all their data
     if (ban === false) {
-      shouldRemove = false;
+      shouldRemoveOrRestoreData = true;
     }
     const expires = futureDaysToUnixTime(daysUntilExpires);
 
     this.props.onBanPerson({
       person_id,
       ban,
-      remove_data: shouldRemove,
+      remove_or_restore_data: shouldRemoveOrRestoreData,
       reason,
       expires,
     });

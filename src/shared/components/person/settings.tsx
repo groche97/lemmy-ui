@@ -22,21 +22,21 @@ import {
   BlockCommunityResponse,
   BlockInstanceResponse,
   BlockPersonResponse,
-  CommunityBlockView,
+  CommentSortType,
+  Community,
   GenerateTotpSecretResponse,
   GetFederatedInstancesResponse,
   GetSiteResponse,
   Instance,
-  InstanceBlockView,
   LemmyHttp,
   ListingType,
   LoginResponse,
-  PersonBlockView,
-  SortType,
+  Person,
+  PostSortType,
   SuccessResponse,
   UpdateTotpResponse,
 } from "lemmy-js-client";
-import { elementUrl, emDash, fetchLimit, relTags } from "../../config";
+import { matrixUrl, emDash, fetchLimit, relTags } from "../../config";
 import { FirstLoadService, UserService } from "../../services";
 import {
   EMPTY_REQUEST,
@@ -65,7 +65,7 @@ import Tabs from "../common/tabs";
 import { CommunityLink } from "../community/community-link";
 import { PersonListing } from "./person-listing";
 import { InitialFetchRequest } from "../../interfaces";
-import TotpModal from "../common/totp-modal";
+import TotpModal from "../common/modal/totp-modal";
 import { LoadingEllipses } from "../common/loading-ellipses";
 import {
   isBrowser,
@@ -77,6 +77,7 @@ import { getHttpBaseInternal } from "../../utils/env";
 import { IRoutePropsWithFetch } from "../../routes";
 import { RouteComponentProps } from "inferno-router/dist/Route";
 import { simpleScrollMixin } from "../mixins/scroll-mixin";
+import { CommentSortSelect } from "../common/comment-sort-select";
 
 type SettingsData = RouteDataResponse<{
   instancesRes: GetFederatedInstancesResponse;
@@ -95,7 +96,8 @@ interface SettingsState {
     blur_nsfw?: boolean;
     auto_expand?: boolean;
     theme?: string;
-    default_sort_type?: SortType;
+    default_post_sort_type?: PostSortType;
+    default_comment_sort_type?: CommentSortType;
     default_listing_type?: ListingType;
     interface_language?: string;
     avatar?: string;
@@ -113,7 +115,6 @@ interface SettingsState {
     bot_account?: boolean;
     show_bot_accounts?: boolean;
     show_read_posts?: boolean;
-    show_new_post_notifs?: boolean;
     discussion_languages?: number[];
     open_links_in_new_tab?: boolean;
   };
@@ -126,9 +127,9 @@ interface SettingsState {
     delete_content?: boolean;
     password?: string;
   };
-  personBlocks: PersonBlockView[];
-  communityBlocks: CommunityBlockView[];
-  instanceBlocks: InstanceBlockView[];
+  personBlocks: Person[];
+  communityBlocks: Community[];
+  instanceBlocks: Instance[];
   currentTab: string;
   themeList: string[];
   deleteAccountShowConfirm: boolean;
@@ -187,7 +188,7 @@ async function handleGenerateTotp(i: Settings) {
   const generateTotpRes = await HttpService.client.generateTotpSecret();
 
   if (generateTotpRes.state === "failed") {
-    toast(generateTotpRes.err.message, "danger");
+    toast(generateTotpRes.err.name, "danger");
   } else {
     i.setState({ show2faModal: true });
   }
@@ -250,7 +251,9 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
   constructor(props: any, context: any) {
     super(props, context);
 
-    this.handleSortTypeChange = this.handleSortTypeChange.bind(this);
+    this.handlePostSortTypeChange = this.handlePostSortTypeChange.bind(this);
+    this.handleCommentSortTypeChange =
+      this.handleCommentSortTypeChange.bind(this);
     this.handleListingTypeChange = this.handleListingTypeChange.bind(this);
     this.handleBioChange = this.handleBioChange.bind(this);
     this.handleDiscussionLanguageChange =
@@ -278,9 +281,9 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
         local_user: {
           show_nsfw,
           blur_nsfw,
-          auto_expand,
           theme,
-          default_sort_type,
+          default_post_sort_type,
+          default_comment_sort_type,
           default_listing_type,
           interface_language,
           show_avatars,
@@ -315,9 +318,9 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
           ...this.state.saveUserSettingsForm,
           show_nsfw,
           blur_nsfw,
-          auto_expand,
           theme: theme ?? "browser",
-          default_sort_type,
+          default_post_sort_type,
+          default_comment_sort_type,
           default_listing_type,
           interface_language,
           discussion_languages: mui.discussion_languages,
@@ -448,7 +451,13 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
               <div className="card-body">{this.changePasswordHtmlForm()}</div>
             </div>
             <div className="card border-secondary mb-3">
-              <div className="card-body">{this.importExport()}</div>
+              <div className="card-body">{this.totpSection()}</div>
+            </div>
+            <div className="card border-secondary mb-3">
+              <div className="card-body">{this.importExportForm()}</div>
+            </div>
+            <div className="card border-secondary mb-3">
+              <div className="card-body">{this.deleteAccountForm()}</div>
             </div>
           </div>
         </div>
@@ -516,13 +525,11 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
               value={this.state.changePasswordForm.old_password}
               onInput={linkEvent(this, this.handleOldPasswordChange)}
               label={I18NextService.i18n.t("old_password")}
+              required={false}
             />
           </div>
           <div className="input-group mb-3">
-            <button
-              type="submit"
-              className="btn d-block btn-secondary me-4 w-100"
-            >
+            <button type="submit" className="btn btn-secondary">
               {this.state.changePasswordRes.state === "loading" ? (
                 <Spinner />
               ) : (
@@ -557,14 +564,14 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
       <>
         <h2 className="h5">{I18NextService.i18n.t("blocked_users")}</h2>
         <ul className="list-unstyled mb-0">
-          {this.state.personBlocks.map(pb => (
-            <li key={pb.target.id}>
+          {this.state.personBlocks.map(p => (
+            <li key={p.id}>
               <span>
-                <PersonListing person={pb.target} />
+                <PersonListing person={p} />
                 <button
                   className="btn btn-sm"
                   onClick={linkEvent(
-                    { ctx: this, recipientId: pb.target.id },
+                    { ctx: this, recipientId: p.id },
                     this.handleUnblockPerson,
                   )}
                   data-tippy-content={I18NextService.i18n.t("unblock_user")}
@@ -601,14 +608,14 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
       <>
         <h2 className="h5">{I18NextService.i18n.t("blocked_communities")}</h2>
         <ul className="list-unstyled mb-0">
-          {this.state.communityBlocks.map(cb => (
-            <li key={cb.community.id}>
+          {this.state.communityBlocks.map(c => (
+            <li key={c.id}>
               <span>
-                <CommunityLink community={cb.community} />
+                <CommunityLink community={c} />
                 <button
                   className="btn btn-sm"
                   onClick={linkEvent(
-                    { ctx: this, communityId: cb.community.id },
+                    { ctx: this, communityId: c.id },
                     this.handleUnblockCommunity,
                   )}
                   data-tippy-content={I18NextService.i18n.t(
@@ -646,14 +653,14 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
       <>
         <h2 className="h5">{I18NextService.i18n.t("blocked_instances")}</h2>
         <ul className="list-unstyled mb-0">
-          {this.state.instanceBlocks.map(ib => (
-            <li key={ib.instance.id}>
+          {this.state.instanceBlocks.map(i => (
+            <li key={i.id}>
               <span>
-                {ib.instance.domain}
+                {i.domain}
                 <button
                   className="btn btn-sm"
                   onClick={linkEvent(
-                    { ctx: this, instanceId: ib.instance.id },
+                    { ctx: this, instanceId: i.id },
                     this.handleUnblockInstance,
                   )}
                   data-tippy-content={I18NextService.i18n.t("unblock_instance")}
@@ -668,7 +675,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
     );
   }
 
-  importExport() {
+  importExportForm() {
     return (
       <>
         <h2 className="h5">
@@ -681,7 +688,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
         ) ? (
           <>
             <button
-              className="btn btn-secondary w-100 mb-4"
+              className="btn btn-secondary mb-4"
               onClick={linkEvent(this, this.handleExportSettings)}
               type="button"
             >
@@ -696,7 +703,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
                 onChange={linkEvent(this, this.handleImportFileChange)}
               />
               <button
-                className="btn btn-secondary w-100 mt-3"
+                className="btn btn-secondary mt-3"
                 onClick={linkEvent(this, this.handleImportSettings)}
                 type="button"
                 disabled={!this.state.settingsFile}
@@ -753,7 +760,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
               <MarkdownTextArea
                 initialContent={this.state.saveUserSettingsForm.bio}
                 onContentChange={this.handleBioChange}
-                maxLength={300}
+                maxLength={1000}
                 hideNavigationWarnings
                 allLanguages={siteRes.all_languages}
                 siteLanguages={siteRes.discussion_languages}
@@ -778,7 +785,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
           </div>
           <div className="mb-3 row">
             <label className="col-sm-3 col-form-label" htmlFor="matrix-user-id">
-              <a href={elementUrl} rel={relTags}>
+              <a href={matrixUrl} rel={relTags}>
                 {I18NextService.i18n.t("matrix_user_id")}
               </a>
             </label>
@@ -790,7 +797,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
                 placeholder="@user:example.com"
                 value={this.state.saveUserSettingsForm.matrix_user_id}
                 onInput={linkEvent(this, this.handleMatrixUserIdChange)}
-                pattern="^@[A-Za-z0-9._=-]+:[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+                pattern="^@[A-Za-z0-9\x21-\x39\x3B-\x7F]+:[A-Za-z0-9.-]+(:[0-9]{2,5})?$"
               />
             </div>
           </div>
@@ -907,14 +914,29 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
           </form>
           <form className="mb-3 row">
             <label className="col-sm-3 col-form-label">
-              {I18NextService.i18n.t("sort_type")}
+              {I18NextService.i18n.t("post_sort_type")}
             </label>
             <div className="col-sm-9">
               <SortSelect
                 sort={
-                  this.state.saveUserSettingsForm.default_sort_type ?? "Active"
+                  this.state.saveUserSettingsForm.default_post_sort_type ??
+                  "Active"
                 }
-                onChange={this.handleSortTypeChange}
+                onChange={this.handlePostSortTypeChange}
+              />
+            </div>
+          </form>
+          <form className="mb-3 row">
+            <label className="col-sm-3 col-form-label">
+              {I18NextService.i18n.t("comment_sort_type")}
+            </label>
+            <div className="col-sm-9">
+              <CommentSortSelect
+                sort={
+                  this.state.saveUserSettingsForm.default_comment_sort_type ??
+                  "Hot"
+                }
+                onChange={this.handleCommentSortTypeChange}
               />
             </div>
           </form>
@@ -1097,23 +1119,6 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
             <div className="form-check">
               <input
                 className="form-check-input"
-                id="user-show-new-post-notifs"
-                type="checkbox"
-                checked={this.state.saveUserSettingsForm.show_new_post_notifs}
-                onChange={linkEvent(this, this.handleShowNewPostNotifs)}
-              />
-              <label
-                className="form-check-label"
-                htmlFor="user-show-new-post-notifs"
-              >
-                {I18NextService.i18n.t("show_new_post_notifs")}
-              </label>
-            </div>
-          </div>
-          <div className="input-group mb-3">
-            <div className="form-check">
-              <input
-                className="form-check-input"
                 id="user-send-notifications-to-email"
                 type="checkbox"
                 disabled={!this.state.saveUserSettingsForm.email}
@@ -1150,7 +1155,6 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
               </label>
             </div>
           </div>
-          {this.totpSection()}
           <div className="input-group mb-3">
             <button type="submit" className="btn d-block btn-secondary me-4">
               {this.state.saveRes.state === "loading" ? (
@@ -1160,82 +1164,86 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
               )}
             </button>
           </div>
-          <hr />
-          <form
-            className="mb-3"
-            onSubmit={linkEvent(this, this.handleDeleteAccount)}
+        </form>
+      </>
+    );
+  }
+
+  deleteAccountForm() {
+    return (
+      <>
+        <h2 className="h5">{I18NextService.i18n.t("delete_account")}</h2>
+        <form
+          className="mb-3"
+          onSubmit={linkEvent(this, this.handleDeleteAccount)}
+        >
+          <button
+            type="button"
+            className="btn d-block btn-danger"
+            onClick={linkEvent(this, this.handleDeleteAccountShowConfirmToggle)}
           >
-            <button
-              type="button"
-              className="btn d-block btn-danger"
-              onClick={linkEvent(
-                this,
-                this.handleDeleteAccountShowConfirmToggle,
-              )}
-            >
-              {I18NextService.i18n.t("delete_account")}
-            </button>
-            {this.state.deleteAccountShowConfirm && (
-              <>
-                <label
-                  className="my-2 alert alert-danger d-block"
-                  role="alert"
-                  htmlFor="password-delete-account"
-                >
-                  {I18NextService.i18n.t("delete_account_confirm")}
-                </label>
-                <PasswordInput
-                  id="password-delete-account"
-                  value={this.state.deleteAccountForm.password}
-                  onInput={linkEvent(
-                    this,
-                    this.handleDeleteAccountPasswordChange,
-                  )}
-                  className="my-2"
-                />
-                <div className="input-group mb-3">
-                  <div className="form-check">
-                    <input
-                      id="delete-account-content"
-                      type="checkbox"
-                      className="form-check-input"
-                      onInput={linkEvent(
-                        this,
-                        this.handleDeleteAccountContentChange,
-                      )}
-                    />
-                    <label
-                      className="form-check-label"
-                      htmlFor="delete-account-content"
-                    >
-                      {I18NextService.i18n.t("delete_account_content")}
-                    </label>
-                  </div>
+            {I18NextService.i18n.t("delete_account")}
+          </button>
+          {this.state.deleteAccountShowConfirm && (
+            <>
+              <label
+                className="my-2 alert alert-danger d-block"
+                role="alert"
+                htmlFor="password-delete-account"
+              >
+                {I18NextService.i18n.t("delete_account_confirm")}
+              </label>
+              <PasswordInput
+                id="password-delete-account"
+                value={this.state.deleteAccountForm.password}
+                onInput={linkEvent(
+                  this,
+                  this.handleDeleteAccountPasswordChange,
+                )}
+                className="my-2"
+              />
+              <div className="input-group mb-3">
+                <div className="form-check">
+                  <input
+                    id="delete-account-content"
+                    type="checkbox"
+                    className="form-check-input"
+                    onInput={linkEvent(
+                      this,
+                      this.handleDeleteAccountContentChange,
+                    )}
+                  />
+                  <label
+                    className="form-check-label"
+                    htmlFor="delete-account-content"
+                  >
+                    {I18NextService.i18n.t("delete_account_content")}
+                  </label>
                 </div>
-                <button
-                  type="submit"
-                  className="btn btn-danger me-4"
-                  disabled={!this.state.deleteAccountForm.password}
-                >
-                  {this.state.deleteAccountRes.state === "loading" ? (
-                    <Spinner />
-                  ) : (
-                    capitalizeFirstLetter(I18NextService.i18n.t("delete"))
-                  )}
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  type="button"
-                  onClick={linkEvent(
-                    this,
-                    this.handleDeleteAccountShowConfirmToggle,
-                  )}
-                >
-                  {I18NextService.i18n.t("cancel")}
-                </button>
-              </>
-            )}
-          </form>
+              </div>
+              <button
+                type="submit"
+                className="btn btn-danger me-4"
+                disabled={!this.state.deleteAccountForm.password}
+              >
+                {this.state.deleteAccountRes.state === "loading" ? (
+                  <Spinner />
+                ) : (
+                  capitalizeFirstLetter(I18NextService.i18n.t("delete"))
+                )}
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={linkEvent(
+                  this,
+                  this.handleDeleteAccountShowConfirmToggle,
+                )}
+              >
+                {I18NextService.i18n.t("cancel")}
+              </button>
+            </>
+          )}
         </form>
       </>
     );
@@ -1246,9 +1254,11 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
       !!UserService.Instance.myUserInfo?.local_user_view.local_user
         .totp_2fa_enabled;
     const { generateTotpRes } = this.state;
+    const totpActionStr = totpEnabled ? "disable_totp" : "enable_totp";
 
     return (
       <>
+        <h2 className="h5">{I18NextService.i18n.t(totpActionStr)}</h2>
         <button
           type="button"
           className="btn btn-secondary my-2"
@@ -1257,7 +1267,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
             totpEnabled ? handleShowTotpModal : handleGenerateTotp,
           )}
         >
-          {I18NextService.i18n.t(totpEnabled ? "disable_totp" : "enable_totp")}
+          {I18NextService.i18n.t(totpActionStr)}
         </button>
         {totpEnabled ? (
           <TotpModal
@@ -1367,7 +1377,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
           instance =>
             instance.domain.toLowerCase().includes(text.toLowerCase()) &&
             !this.state.instanceBlocks.some(
-              blockedInstance => blockedInstance.instance.id === instance.id,
+              blockedInstance => blockedInstance.id === instance.id,
             ),
         ) ?? [];
     }
@@ -1496,14 +1506,6 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
     );
   }
 
-  handleShowNewPostNotifs(i: Settings, event: any) {
-    i.setState(
-      s => (
-        (s.saveUserSettingsForm.show_new_post_notifs = event.target.checked), s
-      ),
-    );
-  }
-
   handleOpenInNewTab(i: Settings, event: any) {
     i.setState(
       s => (
@@ -1607,8 +1609,16 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
     );
   }
 
-  handleSortTypeChange(val: SortType) {
-    this.setState(s => ((s.saveUserSettingsForm.default_sort_type = val), s));
+  handlePostSortTypeChange(val: PostSortType) {
+    this.setState(
+      s => ((s.saveUserSettingsForm.default_post_sort_type = val), s),
+    );
+  }
+
+  handleCommentSortTypeChange(val: CommentSortType) {
+    this.setState(
+      s => ((s.saveUserSettingsForm.default_comment_sort_type = val), s),
+    );
   }
 
   handleListingTypeChange(val: ListingType) {
@@ -1708,12 +1718,12 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
     const { new_password, new_password_verify, old_password } =
       i.state.changePasswordForm;
 
-    if (new_password && old_password && new_password_verify) {
+    if (new_password && new_password_verify) {
       i.setState({ changePasswordRes: LOADING_REQUEST });
       const changePasswordRes = await HttpService.client.changePassword({
         new_password,
         new_password_verify,
-        old_password,
+        old_password: old_password || "",
       });
       if (changePasswordRes.state === "success") {
         snapToTop();
@@ -1739,7 +1749,7 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
       i.exportSettingsLink.current?.click();
     } else if (res.state === "failed") {
       toast(
-        res.err.message === "rate_limit_error"
+        res.err.name === "rate_limit_error"
           ? I18NextService.i18n.t("import_export_rate_limit_error")
           : I18NextService.i18n.t("export_error"),
         "danger",
@@ -1770,14 +1780,13 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
           local_user: {
             show_nsfw,
             blur_nsfw,
-            auto_expand,
             theme,
-            default_sort_type,
+            default_post_sort_type,
+            default_comment_sort_type,
             default_listing_type,
             interface_language,
             show_avatars,
             show_bot_accounts,
-            show_scores,
             show_read_posts,
             send_notifications_to_email,
             email,
@@ -1810,24 +1819,23 @@ export class Settings extends Component<SettingsRouteProps, SettingsState> {
             display_name,
             bio,
             matrix_user_id,
-            auto_expand,
             blur_nsfw,
             bot_account,
             default_listing_type,
-            default_sort_type,
+            default_post_sort_type,
+            default_comment_sort_type,
             discussion_languages: siteRes.data.my_user?.discussion_languages,
             email,
             interface_language,
             open_links_in_new_tab,
             send_notifications_to_email,
             show_read_posts,
-            show_scores,
           },
         }));
       }
     } else if (res.state === "failed") {
       toast(
-        res.err.message === "rate_limit_error"
+        res.err.name === "rate_limit_error"
           ? I18NextService.i18n.t("import_export_rate_limit_error")
           : I18NextService.i18n.t("import_error"),
         "danger",

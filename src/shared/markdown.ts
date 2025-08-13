@@ -17,6 +17,8 @@ import markdown_it_highlightjs from "markdown-it-highlightjs/core";
 import { Renderer, Token } from "markdown-it";
 import { instanceLinkRegex, relTags } from "./config";
 import { lazyHighlightjs } from "./lazy-highlightjs";
+import { HttpService } from "./services";
+import { WrappedLemmyHttp } from "./services/HttpService";
 
 let Tribute: any;
 
@@ -32,7 +34,7 @@ export const mdLimited: MarkdownIt = new MarkdownIt("zero").enable([
   "strikethrough",
 ]);
 
-export const customEmojis: EmojiMartCategory[] = [];
+let customEmojis: EmojiMartCategory[] = [];
 
 export let customEmojisLookup: Map<string, CustomEmojiView> = new Map<
   string,
@@ -60,7 +62,7 @@ const spoilerConfig = {
     const m = tokens[idx].info.trim().match(/^spoiler\s+(.*)$/);
     if (tokens[idx].nesting === 1) {
       // opening tag
-      const summary = mdToHtmlInline(md.utils.escapeHtml(m[1])).__html;
+      const summary = mdToHtmlInline(m[1]).__html;
       return `<details><summary> ${summary} </summary>\n`;
     } else {
       // closing tag
@@ -118,6 +120,9 @@ function localInstanceLinkParser(md: MarkdownIt) {
             let href: string;
             if (match[0].startsWith("!")) {
               href = "/c/" + match[0].substring(1);
+            } else if (match[0].startsWith("@")) {
+              href = "/u/" + match[0].substring(1);
+              linkClass = "user-link";
             } else if (match[0].startsWith("/m/")) {
               href = "/c/" + match[0].substring(3);
             } else {
@@ -204,28 +209,17 @@ export function setupMarkdown() {
   ) {
     //Provide custom renderer for our emojis to allow us to add a css class and force size dimensions on them.
     const item = tokens[idx] as any;
-    let title = item.attrs.length >= 3 ? item.attrs[2][1] : "";
+    const title = item.attrs.length > 2 ? item.attrs[2][1] : "";
     const splitTitle = title.split(/ (.*)/, 2);
     const isEmoji = splitTitle[0] === "emoji";
-    if (isEmoji) {
-      title = splitTitle[1];
+    const imgElement =
+      defaultImageRenderer?.(tokens, idx, options, env, self) ?? "";
+    if (imgElement) {
+      return isEmoji
+        ? `<span class="icon icon-emoji">${imgElement}</span>`
+        : imgElement;
     }
-    const customEmoji = customEmojisLookup.get(title);
-    const isLocalEmoji = customEmoji !== undefined;
-    if (!isLocalEmoji) {
-      const imgElement =
-        defaultImageRenderer?.(tokens, idx, options, env, self) ?? "";
-      if (imgElement) {
-        return `<span class='${
-          isEmoji ? "icon icon-emoji" : ""
-        }'>${imgElement}</span>`;
-      } else return "";
-    }
-    return `<img class="icon icon-emoji" src="${
-      customEmoji!.custom_emoji.image_url
-    }" title="${customEmoji!.custom_emoji.shortcode}" alt="${
-      customEmoji!.custom_emoji.alt_text
-    }"/>`;
+    return "";
   };
   md.renderer.rules.table_open = function () {
     return '<table class="table">';
@@ -247,11 +241,14 @@ export function setupMarkdown() {
   };
 }
 
-export function setupEmojiDataModel(custom_emoji_views: CustomEmojiView[]) {
+export function emojiMartCategories(
+  custom_emoji_views: CustomEmojiView[],
+): EmojiMartCategory[] {
   const groupedEmojis = groupBy(
     custom_emoji_views,
     x => x.custom_emoji.category,
   );
+  const customEmojis: EmojiMartCategory[] = [];
   for (const [category, emojis] of Object.entries(groupedEmojis)) {
     customEmojis.push({
       id: category,
@@ -264,63 +261,24 @@ export function setupEmojiDataModel(custom_emoji_views: CustomEmojiView[]) {
       })),
     });
   }
+  return customEmojis;
+}
+
+export async function setupEmojiDataModel(
+  client: WrappedLemmyHttp = HttpService.client,
+): Promise<boolean> {
+  const emojisRes = await client.listCustomEmojis({
+    ignore_page_limits: true,
+  });
+  if (emojisRes.state !== "success") {
+    return false;
+  }
+  const custom_emoji_views = emojisRes.data.custom_emojis;
+  customEmojis = emojiMartCategories(custom_emoji_views);
   customEmojisLookup = new Map(
     custom_emoji_views.map(view => [view.custom_emoji.shortcode, view]),
   );
-}
-
-export function updateEmojiDataModel(custom_emoji_view: CustomEmojiView) {
-  const emoji: EmojiMartCustomEmoji = {
-    id: custom_emoji_view.custom_emoji.shortcode,
-    name: custom_emoji_view.custom_emoji.shortcode,
-    keywords: custom_emoji_view.keywords.map(x => x.keyword),
-    skins: [{ src: custom_emoji_view.custom_emoji.image_url }],
-  };
-  const categoryIndex = customEmojis.findIndex(
-    x => x.id === custom_emoji_view.custom_emoji.category,
-  );
-  if (categoryIndex === -1) {
-    customEmojis.push({
-      id: custom_emoji_view.custom_emoji.category,
-      name: custom_emoji_view.custom_emoji.category,
-      emojis: [emoji],
-    });
-  } else {
-    const emojiIndex = customEmojis[categoryIndex].emojis.findIndex(
-      x => x.id === custom_emoji_view.custom_emoji.shortcode,
-    );
-    if (emojiIndex === -1) {
-      customEmojis[categoryIndex].emojis.push(emoji);
-    } else {
-      customEmojis[categoryIndex].emojis[emojiIndex] = emoji;
-    }
-  }
-  customEmojisLookup.set(
-    custom_emoji_view.custom_emoji.shortcode,
-    custom_emoji_view,
-  );
-}
-
-export function removeFromEmojiDataModel(id: number) {
-  let view: CustomEmojiView | undefined;
-  for (const item of customEmojisLookup.values()) {
-    if (item.custom_emoji.id === id) {
-      view = item;
-      break;
-    }
-  }
-  if (!view) return;
-  const categoryIndex = customEmojis.findIndex(
-    x => x.id === view?.custom_emoji.category,
-  );
-  const emojiIndex = customEmojis[categoryIndex].emojis.findIndex(
-    x => x.id === view?.custom_emoji.shortcode,
-  );
-  customEmojis[categoryIndex].emojis = customEmojis[
-    categoryIndex
-  ].emojis.splice(emojiIndex, 1);
-
-  customEmojisLookup.delete(view?.custom_emoji.shortcode);
+  return true;
 }
 
 export function getEmojiMart(
@@ -328,15 +286,16 @@ export function getEmojiMart(
   customPickerOptions: any = {},
 ) {
   const pickerOptions = {
-    ...customPickerOptions,
     onEmojiSelect: onEmojiSelect,
     custom: customEmojis,
+    ...customPickerOptions,
   };
   return new Picker(pickerOptions);
 }
 
 export async function setupTribute() {
-  if (Tribute === null) {
+  // eslint-disable-next-line eqeqeq
+  if (Tribute == null) {
     console.debug("Tribute is null, importing...");
     Tribute = (await import("tributejs")).default;
   }
@@ -368,7 +327,7 @@ export async function setupTribute() {
           .concat(
             Array.from(customEmojisLookup.entries()).map(k => ({
               key: k[0],
-              val: `<img class="icon icon-emoji" src="${k[1].custom_emoji.image_url}" title="${k[1].custom_emoji.shortcode}" alt="${k[1].custom_emoji.alt_text}" />`,
+              val: `<img class="icon icon-emoji" src="${md.utils.escapeHtml(k[1].custom_emoji.image_url)}" title="${md.utils.escapeHtml(k[1].custom_emoji.shortcode)}" alt="${md.utils.escapeHtml(k[1].custom_emoji.alt_text)}" />`,
             })),
           ),
         allowSpaces: false,
@@ -414,7 +373,7 @@ export async function setupTribute() {
   });
 }
 
-interface EmojiMartCategory {
+export interface EmojiMartCategory {
   id: string;
   name: string;
   emojis: EmojiMartCustomEmoji[];

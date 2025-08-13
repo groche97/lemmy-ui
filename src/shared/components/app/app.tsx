@@ -13,16 +13,18 @@ import { Navbar } from "./navbar";
 import "./styles.scss";
 import { Theme } from "./theme";
 import AnonymousGuard from "../common/anonymous-guard";
-import AdultConsentModal from "../common/adult-consent-modal";
+import AdultConsentModal from "../common/modal/adult-consent-modal";
 import { destroyTippy, setupTippy } from "../../tippy";
 
-function handleJumpToContent(event) {
+function handleJumpToContent(app: App, event: any) {
   event.preventDefault();
+  app.contentRef.current?.focus();
 }
 
 export default class App extends Component<any, any> {
   private isoData: IsoDataOptionalSite = setIsoData(this.context);
   private readonly rootRef = createRef<HTMLDivElement>();
+  readonly contentRef = createRef<HTMLDivElement>();
 
   componentDidMount() {
     setupTippy(this.rootRef);
@@ -69,7 +71,7 @@ export default class App extends Component<any, any> {
 
           return (
             <ErrorGuard>
-              <div tabIndex={-1}>
+              <div tabIndex={-1} ref={this.contentRef}>
                 {RouteComponent &&
                   (isAuthPath(path ?? "") ? (
                     <AuthGuard {...routeProps}>
@@ -120,12 +122,12 @@ export default class App extends Component<any, any> {
               <Theme defaultTheme={siteView.local_site.default_theme} />
             )}
             <Navbar siteRes={siteRes} />
-            <div className="mt-4 p-0 fl-1">
+            <main className="mt-4 p-0 fl-1">
               <Switch>
                 {this.routes}
                 <Route component={ErrorPage} />
               </Switch>
-            </div>
+            </main>
             <Footer site={siteRes} />
           </div>
         </>

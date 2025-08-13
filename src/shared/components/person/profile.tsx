@@ -4,6 +4,7 @@ import {
   editWith,
   enableDownvotes,
   enableNsfw,
+  postToCommentSortType,
   setIsoData,
   updatePersonBlock,
   voteDisplayMode,
@@ -70,9 +71,14 @@ import {
   RemovePost,
   SaveComment,
   SavePost,
-  SortType,
+  PostSortType,
   SuccessResponse,
   TransferCommunity,
+  RegistrationApplicationResponse,
+  GetPosts,
+  GetComments,
+  GetPostsResponse,
+  GetCommentsResponse,
 } from "lemmy-js-client";
 import { fetchLimit, relTags } from "../../config";
 import { InitialFetchRequest, PersonDetailsView } from "../../interfaces";
@@ -100,10 +106,13 @@ import { IRoutePropsWithFetch } from "../../routes";
 import { MediaUploads } from "../common/media-uploads";
 import { cakeDate } from "@utils/helpers";
 import { isBrowser } from "@utils/browser";
+import DisplayModal from "../common/modal/display-modal";
 
 type ProfileData = RouteDataResponse<{
   personRes: GetPersonDetailsResponse;
   uploadsRes: ListMediaResponse;
+  likedPostsRes: GetPostsResponse;
+  likedCommentsRes: GetCommentsResponse;
 }>;
 
 interface ProfileState {
@@ -111,19 +120,23 @@ interface ProfileState {
   // personRes and personDetailsRes point to `===` identical data. This allows
   // to render the start of the profile while the new details are loading.
   personDetailsRes: RequestState<GetPersonDetailsResponse>;
+  likedCommentsRes: RequestState<GetCommentsResponse>;
+  likedPostsRes: RequestState<GetPostsResponse>;
   uploadsRes: RequestState<ListMediaResponse>;
+  registrationRes: RequestState<RegistrationApplicationResponse>;
   personBlocked: boolean;
   banReason?: string;
   banExpireDays?: number;
   showBanDialog: boolean;
-  removeData: boolean;
+  removeOrRestoreData: boolean;
   siteRes: GetSiteResponse;
   isIsomorphic: boolean;
+  showRegistrationDialog: boolean;
 }
 
 interface ProfileProps {
   view: PersonDetailsView;
-  sort: SortType;
+  sort: PostSortType;
   page: number;
 }
 
@@ -138,8 +151,8 @@ export function getProfileQueryParams(source?: string): ProfileProps {
   );
 }
 
-function getSortTypeFromQuery(sort?: string): SortType {
-  return sort ? (sort as SortType) : "New";
+function getSortTypeFromQuery(sort?: string): PostSortType {
+  return sort ? (sort as PostSortType) : "New";
 }
 
 function getViewFromProps(view?: string): PersonDetailsView {
@@ -178,7 +191,7 @@ function isPersonBlocked(personRes: RequestState<GetPersonDetailsResponse>) {
   return (
     (personRes.state === "success" &&
       UserService.Instance.myUserInfo?.person_blocks.some(
-        ({ target: { id } }) => id === personRes.data.person_view.person.id,
+        ({ id }) => id === personRes.data.person_view.person.id,
       )) ??
     false
   );
@@ -198,17 +211,23 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
   state: ProfileState = {
     personRes: EMPTY_REQUEST,
     personDetailsRes: EMPTY_REQUEST,
+    likedCommentsRes: EMPTY_REQUEST,
+    likedPostsRes: EMPTY_REQUEST,
     uploadsRes: EMPTY_REQUEST,
     personBlocked: false,
     siteRes: this.isoData.site_res,
     showBanDialog: false,
-    removeData: false,
+    removeOrRestoreData: false,
     isIsomorphic: false,
+    showRegistrationDialog: false,
+    registrationRes: EMPTY_REQUEST,
   };
 
   loadingSettled() {
     return resourcesSettled([
       this.state.personRes,
+      this.state.likedCommentsRes,
+      this.state.likedPostsRes,
       this.props.view === PersonDetailsView.Uploads
         ? this.state.uploadsRes
         : this.state.personDetailsRes,
@@ -252,14 +271,20 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
     this.handlePurgePost = this.handlePurgePost.bind(this);
     this.handleFeaturePost = this.handleFeaturePost.bind(this);
     this.handleModBanSubmit = this.handleModBanSubmit.bind(this);
+    this.handleRegistrationShow = this.handleRegistrationShow.bind(this);
+    this.handleRegistrationClose = this.handleRegistrationClose.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
       const personRes = this.isoData.routeData.personRes;
+      const likedCommentsRes = this.isoData.routeData.likedCommentsRes;
+      const likedPostsRes = this.isoData.routeData.likedPostsRes;
       const uploadsRes = this.isoData.routeData.uploadsRes;
       this.state = {
         ...this.state,
         personRes,
+        likedCommentsRes,
+        likedPostsRes,
         personDetailsRes: personRes,
         uploadsRes,
         isIsomorphic: true,
@@ -324,8 +349,14 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
     const token = (this.fetchUploadsToken = this.fetchUserDataToken = Symbol());
     const { page, sort, view } = props;
 
+    const requestLiked = view === PersonDetailsView.Upvoted;
+
     if (view === PersonDetailsView.Uploads) {
       this.fetchUploads(props);
+      this.setState({
+        likedCommentsRes: EMPTY_REQUEST,
+        likedPostsRes: EMPTY_REQUEST,
+      });
       if (!showBothLoading) {
         return;
       }
@@ -338,17 +369,23 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
         this.setState({
           personRes: LOADING_REQUEST,
           personDetailsRes: LOADING_REQUEST,
+          likedCommentsRes: requestLiked ? LOADING_REQUEST : EMPTY_REQUEST,
+          likedPostsRes: requestLiked ? LOADING_REQUEST : EMPTY_REQUEST,
           uploadsRes: EMPTY_REQUEST,
         });
       } else {
         this.setState({
           personDetailsRes: LOADING_REQUEST,
+          likedCommentsRes: requestLiked ? LOADING_REQUEST : EMPTY_REQUEST,
+          likedPostsRes: requestLiked ? LOADING_REQUEST : EMPTY_REQUEST,
           uploadsRes: EMPTY_REQUEST,
         });
       }
     }
 
-    const personRes = await HttpService.client.getPersonDetails({
+    const client = HttpService.client;
+
+    const personFetch = client.getPersonDetails({
       username: props.match.params.username,
       sort,
       saved_only: view === PersonDetailsView.Saved,
@@ -356,11 +393,45 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
       limit: fetchLimit,
     });
 
+    let likedCommentsFetch: Promise<RequestState<GetCommentsResponse>> =
+      Promise.resolve(EMPTY_REQUEST);
+    let likedPostsFetch: Promise<RequestState<GetPostsResponse>> =
+      Promise.resolve(EMPTY_REQUEST);
+
+    if (requestLiked) {
+      const likedCommentsForm: GetComments = {
+        page,
+        limit: fetchLimit,
+        type_: "All",
+        sort: postToCommentSortType(sort),
+        liked_only: true,
+      };
+      likedCommentsFetch = client.getComments(likedCommentsForm);
+
+      const likedPostsForm: GetPosts = {
+        page,
+        limit: fetchLimit,
+        type_: "All",
+        sort,
+        liked_only: true,
+        show_read: true,
+      };
+      likedPostsFetch = client.getPosts(likedPostsForm);
+    }
+
+    const [personRes, likedCommentsRes, likedPostsRes] = await Promise.all([
+      personFetch,
+      likedCommentsFetch,
+      likedPostsFetch,
+    ]);
+
     if (token === this.fetchUserDataToken) {
       this.setState({
         personRes,
         personDetailsRes: personRes,
         personBlocked: isPersonBlocked(personRes),
+        likedCommentsRes,
+        likedPostsRes,
       });
     }
   }
@@ -407,10 +478,44 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
       page,
       limit: fetchLimit,
     };
-    const personRes = await client.getPersonDetails(form);
+    const personFetch = client.getPersonDetails(form);
+
+    let likedCommentsFetch: Promise<RequestState<GetCommentsResponse>> =
+      Promise.resolve(EMPTY_REQUEST);
+    let likedPostsFetch: Promise<RequestState<GetPostsResponse>> =
+      Promise.resolve(EMPTY_REQUEST);
+
+    if (view === PersonDetailsView.Upvoted) {
+      const likedCommentsForm: GetComments = {
+        page,
+        limit: fetchLimit,
+        type_: "All",
+        sort: postToCommentSortType(sort),
+        liked_only: true,
+      };
+      likedCommentsFetch = client.getComments(likedCommentsForm);
+
+      const likedPostsForm: GetPosts = {
+        page,
+        limit: fetchLimit,
+        type_: "All",
+        sort,
+        liked_only: true,
+        show_read: true,
+      };
+      likedPostsFetch = client.getPosts(likedPostsForm);
+    }
+
+    const [personRes, likedCommentsRes, likedPostsRes] = await Promise.all([
+      personFetch,
+      likedCommentsFetch,
+      likedPostsFetch,
+    ]);
 
     return {
       personRes,
+      likedCommentsRes,
+      likedPostsRes,
       uploadsRes,
     };
   }
@@ -459,6 +564,18 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
         const personDetailsRes =
           personDetailsState === "success" && this.state.personDetailsRes.data;
 
+        const likedCommentsState = this.state.likedCommentsRes.state;
+        const likedCommentsRes =
+          likedCommentsState === "success"
+            ? this.state.likedCommentsRes.data
+            : undefined;
+
+        const likedPostsState = this.state.likedPostsRes.state;
+        const likedPostsRes =
+          likedPostsState === "success"
+            ? this.state.likedPostsRes.data
+            : undefined;
+
         return (
           <div className="row">
             <div className="col-12 col-md-8">
@@ -478,7 +595,9 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
 
               {this.renderUploadsRes()}
 
-              {personDetailsState === "loading" &&
+              {(personDetailsState === "loading" ||
+                likedCommentsState === "loading" ||
+                likedPostsState === "loading") &&
               this.props.view !== PersonDetailsView.Uploads ? (
                 <h5>
                   <Spinner large />
@@ -487,6 +606,8 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
                 personDetailsRes && (
                   <PersonDetails
                     personRes={personDetailsRes}
+                    likedCommentsRes={likedCommentsRes}
+                    likedPostsRes={likedPostsRes}
                     admins={siteRes.admins}
                     sort={sort}
                     page={page}
@@ -558,6 +679,7 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
         {this.getRadio(PersonDetailsView.Posts)}
         {this.amCurrentUser && this.getRadio(PersonDetailsView.Saved)}
         {this.amCurrentUser && this.getRadio(PersonDetailsView.Uploads)}
+        {this.amCurrentUser && this.getRadio(PersonDetailsView.Upvoted)}
       </div>
     );
   }
@@ -606,19 +728,21 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
             hideMostComments
           />
         </div>
-        {/* Don't show the rss feed for the Saved view, as that's not implemented.*/}
-        {view !== PersonDetailsView.Saved && (
-          <div className="col-auto">
-            <a href={profileRss} rel={relTags} title="RSS">
-              <Icon icon="rss" classes="text-muted small ps-0" />
-            </a>
-            <link
-              rel="alternate"
-              type="application/atom+xml"
-              href={profileRss}
-            />
-          </div>
-        )}
+        {/* Don't show the rss feed for the Saved, Uploads, and Upvoted view, as that's not implemented.*/}
+        {view !== PersonDetailsView.Saved &&
+          view !== PersonDetailsView.Uploads &&
+          view !== PersonDetailsView.Upvoted && (
+            <div className="col-auto">
+              <a href={profileRss} rel={relTags} title="RSS">
+                <Icon icon="rss" classes="text-muted small ps-0" />
+              </a>
+              <link
+                rel="alternate"
+                type="application/atom+xml"
+                href={profileRss}
+              />
+            </div>
+          )}
       </div>
     );
   }
@@ -628,6 +752,8 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
       personBlocked,
       siteRes: { admins },
       showBanDialog,
+      showRegistrationDialog,
+      registrationRes,
     } = this.state;
 
     return (
@@ -752,6 +878,46 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
                       {capitalizeFirstLetter(I18NextService.i18n.t("unban"))}
                     </button>
                   ))}
+                {amAdmin() && pv.person.local && (
+                  <>
+                    <button
+                      className={
+                        "d-flex registration-self-start btn btn-secondary me-2"
+                      }
+                      aria-label={I18NextService.i18n.t("view_registration")}
+                      onClick={this.handleRegistrationShow}
+                    >
+                      {I18NextService.i18n.t("view_registration")}
+                    </button>
+                    {showRegistrationDialog && (
+                      <DisplayModal
+                        onClose={this.handleRegistrationClose}
+                        loadingMessage={I18NextService.i18n.t(
+                          "loading_registration",
+                        )}
+                        title={I18NextService.i18n.t("registration_for_user", {
+                          name: pv.person.display_name ?? pv.person.name,
+                        })}
+                        show={showRegistrationDialog}
+                        loading={registrationRes.state === "loading"}
+                      >
+                        {registrationRes.state === "success" ? (
+                          <article
+                            dangerouslySetInnerHTML={mdToHtml(
+                              registrationRes.data.registration_application
+                                .registration_application.answer,
+                              () => this.forceUpdate(),
+                            )}
+                          />
+                        ) : registrationRes.state === "failed" ? (
+                          I18NextService.i18n.t("fetch_registration_error")
+                        ) : (
+                          ""
+                        )}
+                      </DisplayModal>
+                    )}
+                  </>
+                )}
               </div>
               {pv.person.bio && (
                 <div className="d-flex align-items-center mb-2">
@@ -841,7 +1007,7 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
                   className="form-check-input"
                   id="mod-ban-remove-data"
                   type="checkbox"
-                  checked={this.state.removeData}
+                  checked={this.state.removeOrRestoreData}
                   onChange={linkEvent(this, this.handleModRemoveDataChange)}
                 />
                 <label
@@ -906,7 +1072,7 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
     this.updateUrl({ page });
   }
 
-  handleSortChange(sort: SortType) {
+  handleSortChange(sort: PostSortType) {
     this.updateUrl({ sort, page: 1 });
   }
 
@@ -930,16 +1096,42 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
   }
 
   handleModRemoveDataChange(i: Profile, event: any) {
-    i.setState({ removeData: event.target.checked });
+    i.setState({ removeOrRestoreData: event.target.checked });
   }
 
   handleModBanSubmitCancel(i: Profile) {
     i.setState({ showBanDialog: false });
   }
 
+  handleRegistrationShow() {
+    if (this.state.registrationRes.state !== "success") {
+      this.setState({ registrationRes: LOADING_REQUEST });
+    }
+
+    this.setState({ showRegistrationDialog: true });
+
+    if (this.state.personDetailsRes.state === "success") {
+      HttpService.client
+        .getRegistrationApplication({
+          person_id: this.state.personDetailsRes.data.person_view.person.id,
+        })
+        .then(res => {
+          this.setState({ registrationRes: res });
+
+          if (res.state === "failed") {
+            toast(I18NextService.i18n.t("fetch_registration_error"), "danger");
+          }
+        });
+    }
+  }
+
+  handleRegistrationClose() {
+    this.setState({ showRegistrationDialog: false });
+  }
+
   async handleModBanSubmit(i: Profile, event: any) {
     event.preventDefault();
-    const { removeData, banReason, banExpireDays } = i.state;
+    const { banReason, banExpireDays } = i.state;
 
     const personRes = i.state.personRes;
 
@@ -949,13 +1141,13 @@ export class Profile extends Component<ProfileRouteProps, ProfileState> {
 
       // If its an unban, restore all their data
       if (!ban) {
-        i.setState({ removeData: false });
+        i.setState({ removeOrRestoreData: true });
       }
 
       const res = await HttpService.client.banPerson({
         person_id: person.id,
         ban,
-        remove_data: removeData,
+        remove_or_restore_data: i.state.removeOrRestoreData,
         reason: banReason,
         expires: futureDaysToUnixTime(banExpireDays),
       });

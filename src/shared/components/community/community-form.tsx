@@ -14,6 +14,7 @@ import { ImageUploadForm } from "../common/image-upload-form";
 import { LanguageSelect } from "../common/language-select";
 import { MarkdownTextArea } from "../common/markdown-textarea";
 import { tippyMixin } from "../mixins/tippy-mixin";
+import { validActorRegexPattern } from "../../config";
 
 interface CommunityFormProps {
   community_view?: CommunityView; // If a community is given, that means this is an edit
@@ -129,7 +130,7 @@ export class CommunityForm extends Component<
                 onInput={linkEvent(this, this.handleCommunityNameChange)}
                 required
                 minLength={3}
-                pattern="[a-z0-9_]+"
+                pattern={validActorRegexPattern}
                 title={I18NextService.i18n.t("community_reqs")}
               />
             </div>
@@ -241,9 +242,12 @@ export class CommunityForm extends Component<
           </div>
         </div>
         <div className="mb-3 row">
-          <legend className="col-form-label col-6 pt-0">
+          <label
+            className="col-form-label col-6 pt-0"
+            htmlFor="community-only-mods-can-post"
+          >
             {I18NextService.i18n.t("only_mods_can_post_in_community")}
-          </legend>
+          </label>
           <div className="col-6">
             <div className="form-check">
               <input

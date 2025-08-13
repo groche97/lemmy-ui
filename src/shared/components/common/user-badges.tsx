@@ -5,6 +5,7 @@ import { tippyMixin } from "../mixins/tippy-mixin";
 
 interface UserBadgesProps {
   isBanned?: boolean;
+  isBannedFromCommunity?: boolean;
   isDeleted?: boolean;
   isPostCreator?: boolean;
   isMod?: boolean;
@@ -40,6 +41,8 @@ export class UserBadges extends Component<UserBadgesProps> {
   render() {
     return (
       (this.props.isBanned ||
+        this.props.isBannedFromCommunity ||
+        this.props.isDeleted ||
         this.props.isPostCreator ||
         this.props.isMod ||
         this.props.isAdmin ||
@@ -60,12 +63,22 @@ export class UserBadges extends Component<UserBadgesProps> {
               })}
             </span>
           )}
+          {this.props.isBannedFromCommunity && (
+            <span className="col">
+              {getRoleLabelPill({
+                label: I18NextService.i18n.t("banned_from_community_badge"),
+                tooltip: I18NextService.i18n.t("banned_from_community_badge"),
+                classes: "text-danger border border-danger",
+                shrink: false,
+              })}
+            </span>
+          )}
           {this.props.isDeleted && (
             <span className="col">
               {getRoleLabelPill({
                 label: I18NextService.i18n.t("deleted"),
                 tooltip: I18NextService.i18n.t("deleted"),
-                classes: "text-danger border border-danger",
+                classes: "text-info border border-info",
                 shrink: false,
               })}
             </span>

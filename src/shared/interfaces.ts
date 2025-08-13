@@ -17,6 +17,7 @@ export interface IsoData<T extends RouteData = any> {
   site_res: GetSiteResponse;
   errorPageData?: ErrorPageData;
   showAdultConsentModal: boolean;
+  lemmy_external_host: string;
 }
 
 export type IsoDataOptionalSite<T extends RouteData = any> = Partial<
@@ -74,6 +75,7 @@ export enum PersonDetailsView {
   Posts = "Posts",
   Saved = "Saved",
   Uploads = "Uploads",
+  Upvoted = "Upvoted",
 }
 
 export enum PurgeType {
