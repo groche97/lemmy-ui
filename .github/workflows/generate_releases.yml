@@ -1,7 +1,7 @@
 on:
-  - push:
-      tags:
-        - "*.*.*"
+  push:
+    tags:
+      - "*.*.*"
 
 jobs:
   cache-and-install:
