@@ -1,8 +1,8 @@
 on:
+  - workflow_dispatch
   - push:
       tags:
         - "*.*.*"
-  - workflow_dispatch
 
 jobs:
   cache-and-install:
