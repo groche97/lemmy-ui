@@ -34,7 +34,7 @@ jobs:
         run: pnpm build:prod
       
       - name: Create artifact
-        run: tar -c ./* --exclude='./.git' --exclude='./lemmy-translations/.git'  -f lemmy-ui.tar
+        run: tar -c --exclude='./.git' --exclude='./lemmy-translations/.git' -c ./* -f lemmy-ui.tar
         
       - name: Release
         uses: softprops/action-gh-release@v2
