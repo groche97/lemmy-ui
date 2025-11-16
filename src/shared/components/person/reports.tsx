@@ -1,45 +1,39 @@
 import {
-  editCommentReport,
-  editPostReport,
-  editPrivateMessageReport,
-  enableDownvotes,
+  editCombined,
   enableNsfw,
+  getUncombinedReport,
   setIsoData,
-  voteDisplayMode,
+  toast,
 } from "@utils/app";
-import { randomStr, resourcesSettled } from "@utils/helpers";
+import { cursorComponents, randomStr, resourcesSettled } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
 import { amAdmin } from "@utils/roles";
-import { RouteDataResponse } from "@utils/types";
+import { DirectionalCursor, RouteDataResponse } from "@utils/types";
 import classNames from "classnames";
-import { Component, linkEvent } from "inferno";
+import { Component, InfernoNode, linkEvent } from "inferno";
 import {
   CommentReportResponse,
-  CommentReportView,
   GetSiteResponse,
   LemmyHttp,
-  ListCommentReports,
-  ListCommentReportsResponse,
-  ListPostReports,
-  ListPostReportsResponse,
-  ListPrivateMessageReports,
-  ListPrivateMessageReportsResponse,
+  ListReports,
+  ListReportsResponse,
   PostReportResponse,
-  PostReportView,
   PrivateMessageReportResponse,
-  PrivateMessageReportView,
+  ReportCombinedView,
   ResolveCommentReport,
   ResolvePostReport,
   ResolvePrivateMessageReport,
+  PaginationCursor,
+  ResolveCommunityReport,
+  CommunityReportResponse,
+  ReportType,
+  RemovePost,
+  RemoveComment,
+  Person,
+  Community,
 } from "lemmy-js-client";
-import { fetchLimit } from "../../config";
-import { InitialFetchRequest } from "../../interfaces";
-import {
-  FirstLoadService,
-  HttpService,
-  I18NextService,
-  UserService,
-} from "../../services";
+import { InitialFetchRequest } from "@utils/types";
+import { FirstLoadService, HttpService, I18NextService } from "../../services";
 import {
   EMPTY_REQUEST,
   LOADING_REQUEST,
@@ -49,55 +43,39 @@ import {
 import { CommentReport } from "../comment/comment-report";
 import { HtmlTags } from "../common/html-tags";
 import { Spinner } from "../common/icon";
-import { Paginator } from "../common/paginator";
 import { PostReport } from "../post/post-report";
 import { PrivateMessageReport } from "../private_message/private-message-report";
 import { UnreadCounterService } from "../../services";
 import { getHttpBaseInternal } from "../../utils/env";
 import { RouteComponentProps } from "inferno-router/dist/Route";
-import { IRoutePropsWithFetch } from "../../routes";
+import { IRoutePropsWithFetch } from "@utils/routes";
 import { isBrowser } from "@utils/browser";
+import { PaginatorCursor } from "../common/paginator-cursor";
+import { CommunityReport } from "../community/community-report";
+import ModActionFormModal, {
+  BanUpdateForm,
+} from "@components/common/modal/mod-action-form-modal";
+import { futureDaysToUnixTime } from "@utils/date";
 
 enum UnreadOrAll {
   Unread,
   All,
 }
 
-enum MessageType {
-  All,
-  CommentReport,
-  PostReport,
-  PrivateMessageReport,
-}
-
-enum MessageEnum {
-  CommentReport,
-  PostReport,
-  PrivateMessageReport,
-}
-
 type ReportsData = RouteDataResponse<{
-  commentReportsRes: ListCommentReportsResponse;
-  postReportsRes: ListPostReportsResponse;
-  messageReportsRes: ListPrivateMessageReportsResponse;
+  reportsRes: ListReportsResponse;
 }>;
 
-type ItemType = {
-  id: number;
-  type_: MessageEnum;
-  view: CommentReportView | PostReportView | PrivateMessageReportView;
-  published: string;
-};
-
 interface ReportsState {
-  commentReportsRes: RequestState<ListCommentReportsResponse>;
-  postReportsRes: RequestState<ListPostReportsResponse>;
-  messageReportsRes: RequestState<ListPrivateMessageReportsResponse>;
+  reportsRes: RequestState<ListReportsResponse>;
   unreadOrAll: UnreadOrAll;
-  messageType: MessageType;
+  messageType: ReportType;
   siteRes: GetSiteResponse;
-  page: number;
+  cursor?: DirectionalCursor;
   isIsomorphic: boolean;
+  banFromCommunityForm?: BanFromCommunityData;
+  adminBanForm?: BanFromSiteData;
+  showCommunityRuleViolations: boolean;
 }
 
 type ReportsRouteProps = RouteComponentProps<Record<string, never>> &
@@ -108,26 +86,33 @@ export type ReportsFetchConfig = IRoutePropsWithFetch<
   Record<string, never>
 >;
 
+// These are needed because ModActionFormModal requires full Person/Community, but the api forms
+// (BanFromCommunity) only contain PersonId/CommunityId.
+export interface BanFromCommunityData {
+  person: Person;
+  community: Community;
+  ban: boolean;
+}
+
+export interface BanFromSiteData {
+  person: Person;
+  ban: boolean;
+}
+
 @scrollMixin
 export class Reports extends Component<ReportsRouteProps, ReportsState> {
   private isoData = setIsoData<ReportsData>(this.context);
   state: ReportsState = {
-    commentReportsRes: EMPTY_REQUEST,
-    postReportsRes: EMPTY_REQUEST,
-    messageReportsRes: EMPTY_REQUEST,
+    reportsRes: EMPTY_REQUEST,
     unreadOrAll: UnreadOrAll.Unread,
-    messageType: MessageType.All,
-    page: 1,
-    siteRes: this.isoData.site_res,
+    messageType: "all",
+    siteRes: this.isoData.siteRes,
     isIsomorphic: false,
+    showCommunityRuleViolations: false,
   };
 
   loadingSettled() {
-    return resourcesSettled([
-      this.state.commentReportsRes,
-      this.state.postReportsRes,
-      this.state.messageReportsRes,
-    ]);
+    return resourcesSettled([this.state.reportsRes]);
   }
 
   constructor(props: any, context: any) {
@@ -139,25 +124,29 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     this.handleResolvePostReport = this.handleResolvePostReport.bind(this);
     this.handleResolvePrivateMessageReport =
       this.handleResolvePrivateMessageReport.bind(this);
+    this.handleResolveCommunityReport =
+      this.handleResolveCommunityReport.bind(this);
+    this.handleRemovePost = this.handleRemovePost.bind(this);
+    this.handleRemoveComment = this.handleRemoveComment.bind(this);
+    this.handleAdminBan = this.handleAdminBan.bind(this);
+    this.handleModBanFromCommunity = this.handleModBanFromCommunity.bind(this);
+    this.handleSubmitBanFromCommunity =
+      this.handleSubmitBanFromCommunity.bind(this);
+    this.handleSubmitAdminBan = this.handleSubmitAdminBan.bind(this);
+    this.handleCloseModActionModals =
+      this.handleCloseModActionModals.bind(this);
+    this.handleClickshowCommunityReports =
+      this.handleClickshowCommunityReports.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
-      const { commentReportsRes, postReportsRes, messageReportsRes } =
-        this.isoData.routeData;
+      const { reportsRes } = this.isoData.routeData;
 
       this.state = {
         ...this.state,
-        commentReportsRes,
-        postReportsRes,
+        reportsRes,
         isIsomorphic: true,
       };
-
-      if (amAdmin()) {
-        this.state = {
-          ...this.state,
-          messageReportsRes: messageReportsRes,
-        };
-      }
     }
   }
 
@@ -168,7 +157,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   }
 
   get documentTitle(): string {
-    const mui = UserService.Instance.myUserInfo;
+    const mui = this.isoData.myUserInfo;
     return mui
       ? `@${mui.local_user_view.person.name} ${I18NextService.i18n.t(
           "reports",
@@ -176,9 +165,37 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
       : "";
   }
 
+  get nextPageCursor(): PaginationCursor | undefined {
+    const { reportsRes: res } = this.state;
+    return res.state === "success" ? res.data.next_page : undefined;
+  }
+
   render() {
+    const banFromCommunityForm = this.state.banFromCommunityForm;
+    const adminBanForm = this.state.adminBanForm;
     return (
       <div className="person-reports container-lg">
+        {banFromCommunityForm && (
+          <ModActionFormModal
+            onSubmit={this.handleSubmitBanFromCommunity}
+            modActionType="community-ban"
+            creator={banFromCommunityForm.person}
+            community={banFromCommunityForm.community}
+            isBanned={!banFromCommunityForm.ban}
+            onCancel={this.handleCloseModActionModals}
+            show
+          />
+        )}
+        {adminBanForm && (
+          <ModActionFormModal
+            onSubmit={this.handleSubmitAdminBan}
+            modActionType="site-ban"
+            creator={adminBanForm.person}
+            isBanned={!adminBanForm.ban}
+            onCancel={this.handleCloseModActionModals}
+            show
+          />
+        )}
         <div className="row">
           <div className="col-12">
             <HtmlTags
@@ -188,19 +205,10 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
             <h1 className="h4 mb-4">{I18NextService.i18n.t("reports")}</h1>
             {this.selects()}
             {this.section}
-            <Paginator
-              page={this.state.page}
-              onChange={this.handlePageChange}
-              nextDisabled={
-                (this.state.messageType === MessageType.All &&
-                  fetchLimit > this.buildCombined.length) ||
-                (this.state.messageType === MessageType.CommentReport &&
-                  fetchLimit > this.commentReports.length) ||
-                (this.state.messageType === MessageType.PostReport &&
-                  fetchLimit > this.postReports.length) ||
-                (this.state.messageType === MessageType.PrivateMessageReport &&
-                  fetchLimit > this.privateMessageReports.length)
-              }
+            <PaginatorCursor
+              current={this.state.cursor}
+              resource={this.state.reportsRes}
+              onPageChange={this.handlePageChange}
             />
           </div>
         </div>
@@ -210,17 +218,20 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
 
   get section() {
     switch (this.state.messageType) {
-      case MessageType.All: {
+      case "all": {
         return this.all();
       }
-      case MessageType.CommentReport: {
+      case "comments": {
         return this.commentReports();
       }
-      case MessageType.PostReport: {
+      case "posts": {
         return this.postReports();
       }
-      case MessageType.PrivateMessageReport: {
+      case "private_messages": {
         return this.privateMessageReports();
+      }
+      case "communities": {
+        return this.communityReports();
       }
 
       default: {
@@ -280,14 +291,14 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           id={`${radioId}-all`}
           type="radio"
           className="btn-check"
-          value={MessageType.All}
-          checked={this.state.messageType === MessageType.All}
+          value={"all"}
+          checked={this.state.messageType === "all"}
           onChange={linkEvent(this, this.handleMessageTypeChange)}
         />
         <label
           htmlFor={`${radioId}-all`}
           className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.messageType === MessageType.All,
+            active: this.state.messageType === "all",
           })}
         >
           {I18NextService.i18n.t("all")}
@@ -297,14 +308,14 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           id={`${radioId}-comments`}
           type="radio"
           className="btn-check"
-          value={MessageType.CommentReport}
-          checked={this.state.messageType === MessageType.CommentReport}
+          value={"comments"}
+          checked={this.state.messageType === "comments"}
           onChange={linkEvent(this, this.handleMessageTypeChange)}
         />
         <label
           htmlFor={`${radioId}-comments`}
           className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.messageType === MessageType.CommentReport,
+            active: this.state.messageType === "comments",
           })}
         >
           {I18NextService.i18n.t("comments")}
@@ -314,39 +325,53 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           id={`${radioId}-posts`}
           type="radio"
           className="btn-check"
-          value={MessageType.PostReport}
-          checked={this.state.messageType === MessageType.PostReport}
+          value={"posts"}
+          checked={this.state.messageType === "posts"}
           onChange={linkEvent(this, this.handleMessageTypeChange)}
         />
         <label
           htmlFor={`${radioId}-posts`}
           className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.messageType === MessageType.PostReport,
+            active: this.state.messageType === "posts",
           })}
         >
           {I18NextService.i18n.t("posts")}
         </label>
 
-        {amAdmin() && (
+        {amAdmin(this.isoData.myUserInfo) && (
           <>
             <input
               id={`${radioId}-messages`}
               type="radio"
               className="btn-check"
-              value={MessageType.PrivateMessageReport}
-              checked={
-                this.state.messageType === MessageType.PrivateMessageReport
-              }
+              value={"private_messages"}
+              checked={this.state.messageType === "private_messages"}
               onChange={linkEvent(this, this.handleMessageTypeChange)}
             />
             <label
               htmlFor={`${radioId}-messages`}
               className={classNames("btn btn-outline-secondary pointer", {
-                active:
-                  this.state.messageType === MessageType.PrivateMessageReport,
+                active: this.state.messageType === "private_messages",
               })}
             >
               {I18NextService.i18n.t("messages")}
+            </label>
+
+            <input
+              id={`${radioId}-communities`}
+              type="radio"
+              className="btn-check"
+              value={"communities"}
+              checked={this.state.messageType === "communities"}
+              onChange={linkEvent(this, this.handleMessageTypeChange)}
+            />
+            <label
+              htmlFor={`${radioId}-communities`}
+              className={classNames("btn btn-outline-secondary pointer", {
+                active: this.state.messageType === "communities",
+              })}
+            >
+              {I18NextService.i18n.t("communities")}
             </label>
           </>
         )}
@@ -359,127 +384,107 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
       <div className="mb-2">
         <span className="me-3">{this.unreadOrAllRadios()}</span>
         <span className="me-3">{this.messageTypeRadios()}</span>
+        {this.isoData.myUserInfo?.local_user_view.local_user.admin && (
+          <span className="me-3">
+            <div
+              className="btn-group btn-group-toggle flex-wrap mb-2"
+              role="group"
+            >
+              <button
+                className="btn btn-secondary"
+                onClick={this.handleClickshowCommunityReports}
+              >
+                {I18NextService.i18n.t(
+                  this.state.showCommunityRuleViolations
+                    ? "hide_community_reports"
+                    : "show_community_reports",
+                )}
+              </button>
+            </div>
+          </span>
+        )}
       </div>
     );
   }
 
-  commentReportToItemType(r: CommentReportView): ItemType {
-    return {
-      id: r.comment_report.id,
-      type_: MessageEnum.CommentReport,
-      view: r,
-      published: r.comment_report.published,
-    };
-  }
-
-  postReportToItemType(r: PostReportView): ItemType {
-    return {
-      id: r.post_report.id,
-      type_: MessageEnum.PostReport,
-      view: r,
-      published: r.post_report.published,
-    };
-  }
-
-  privateMessageReportToItemType(r: PrivateMessageReportView): ItemType {
-    return {
-      id: r.private_message_report.id,
-      type_: MessageEnum.PrivateMessageReport,
-      view: r,
-      published: r.private_message_report.published,
-    };
-  }
-
-  get buildCombined(): ItemType[] {
-    const commentRes = this.state.commentReportsRes;
-    const comments =
-      commentRes.state === "success"
-        ? commentRes.data.comment_reports.map(this.commentReportToItemType)
-        : [];
-
-    const postRes = this.state.postReportsRes;
-    const posts =
-      postRes.state === "success"
-        ? postRes.data.post_reports.map(this.postReportToItemType)
-        : [];
-    const pmRes = this.state.messageReportsRes;
-    const privateMessages =
-      pmRes.state === "success"
-        ? pmRes.data.private_message_reports.map(
-            this.privateMessageReportToItemType,
-          )
-        : [];
-
-    return [...comments, ...posts, ...privateMessages].sort((a, b) =>
-      b.published.localeCompare(a.published),
-    );
-  }
-
-  renderItemType(i: ItemType) {
+  renderItemType(i: ReportCombinedView): InfernoNode {
     const siteRes = this.state.siteRes;
     switch (i.type_) {
-      case MessageEnum.CommentReport:
+      case "comment":
         return (
           <CommentReport
-            key={i.id}
-            report={i.view as CommentReportView}
-            enableDownvotes={enableDownvotes(siteRes)}
-            voteDisplayMode={voteDisplayMode(siteRes)}
+            key={i.type_ + i.comment_report.id}
+            report={i}
+            myUserInfo={this.isoData.myUserInfo}
+            localSite={siteRes.site_view.local_site}
+            admins={this.isoData.siteRes.admins}
             onResolveReport={this.handleResolveCommentReport}
+            onRemoveComment={this.handleRemoveComment}
+            onAdminBan={this.handleAdminBan}
+            onModBanFromCommunity={this.handleModBanFromCommunity}
           />
         );
-      case MessageEnum.PostReport:
+      case "post":
         return (
           <PostReport
-            key={i.id}
-            report={i.view as PostReportView}
-            enableDownvotes={enableDownvotes(siteRes)}
-            voteDisplayMode={voteDisplayMode(siteRes)}
+            key={i.type_ + i.post_report.id}
+            report={i}
             enableNsfw={enableNsfw(siteRes)}
+            showAdultConsentModal={this.isoData.showAdultConsentModal}
+            myUserInfo={this.isoData.myUserInfo}
+            localSite={siteRes.site_view.local_site}
+            admins={this.isoData.siteRes.admins}
             onResolveReport={this.handleResolvePostReport}
+            onRemovePost={this.handleRemovePost}
+            onAdminBan={this.handleAdminBan}
+            onModBanFromCommunity={this.handleModBanFromCommunity}
           />
         );
-      case MessageEnum.PrivateMessageReport:
+      case "private_message":
         return (
           <PrivateMessageReport
-            key={i.id}
-            report={i.view as PrivateMessageReportView}
+            key={i.type_ + i.private_message_report.id}
+            report={i}
             onResolveReport={this.handleResolvePrivateMessageReport}
+            myUserInfo={this.isoData.myUserInfo}
           />
         );
-      default:
-        return <div />;
+      case "community":
+        return (
+          <CommunityReport
+            key={i.type_ + i.community_report.id}
+            report={i}
+            onResolveReport={this.handleResolveCommunityReport}
+            myUserInfo={this.isoData.myUserInfo}
+          />
+        );
     }
   }
 
   all() {
-    const combined = this.buildCombined;
-    if (
-      combined.length === 0 &&
-      (this.state.commentReportsRes.state === "loading" ||
-        this.state.postReportsRes.state === "loading" ||
-        this.state.messageReportsRes.state === "loading")
-    ) {
-      return (
-        <h5>
-          <Spinner large />
-        </h5>
-      );
+    switch (this.state.reportsRes.state) {
+      case "loading":
+        return (
+          <h5>
+            <Spinner large />
+          </h5>
+        );
+      case "success":
+        return (
+          <div>
+            {this.state.reportsRes.data.reports.map(i => (
+              <>
+                <hr />
+                {this.renderItemType(i)}
+              </>
+            ))}
+          </div>
+        );
     }
-    return (
-      <div>
-        {combined.map(i => (
-          <>
-            <hr />
-            {this.renderItemType(i)}
-          </>
-        ))}
-      </div>
-    );
   }
 
   commentReports() {
-    const res = this.state.commentReportsRes;
+    const res = this.state.reportsRes;
     const siteRes = this.state.siteRes;
     switch (res.state) {
       case "loading":
@@ -489,7 +494,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.comment_reports;
+        const reports = res.data.reports.filter(r => r.type_ === "comment");
         return (
           <div>
             {reports.map(cr => (
@@ -498,9 +503,13 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                 <CommentReport
                   key={cr.comment_report.id}
                   report={cr}
-                  enableDownvotes={enableDownvotes(siteRes)}
-                  voteDisplayMode={voteDisplayMode(siteRes)}
+                  myUserInfo={this.isoData.myUserInfo}
+                  localSite={siteRes.site_view.local_site}
+                  admins={this.isoData.siteRes.admins}
                   onResolveReport={this.handleResolveCommentReport}
+                  onRemoveComment={this.handleRemoveComment}
+                  onAdminBan={this.handleAdminBan}
+                  onModBanFromCommunity={this.handleModBanFromCommunity}
                 />
               </>
             ))}
@@ -511,7 +520,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   }
 
   postReports() {
-    const res = this.state.postReportsRes;
+    const res = this.state.reportsRes;
     const siteRes = this.state.siteRes;
     switch (res.state) {
       case "loading":
@@ -521,7 +530,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.post_reports;
+        const reports = res.data.reports.filter(r => r.type_ === "post");
         return (
           <div>
             {reports.map(pr => (
@@ -529,11 +538,16 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                 <hr />
                 <PostReport
                   key={pr.post_report.id}
-                  enableDownvotes={enableDownvotes(siteRes)}
-                  voteDisplayMode={voteDisplayMode(siteRes)}
                   enableNsfw={enableNsfw(siteRes)}
+                  showAdultConsentModal={this.isoData.showAdultConsentModal}
                   report={pr}
+                  myUserInfo={this.isoData.myUserInfo}
+                  localSite={siteRes.site_view.local_site}
+                  admins={this.isoData.siteRes.admins}
                   onResolveReport={this.handleResolvePostReport}
+                  onRemovePost={this.handleRemovePost}
+                  onAdminBan={this.handleAdminBan}
+                  onModBanFromCommunity={this.handleModBanFromCommunity}
                 />
               </>
             ))}
@@ -544,7 +558,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   }
 
   privateMessageReports() {
-    const res = this.state.messageReportsRes;
+    const res = this.state.reportsRes;
     switch (res.state) {
       case "loading":
         return (
@@ -553,7 +567,9 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.private_message_reports;
+        const reports = res.data.reports.filter(
+          r => r.type_ === "private_message",
+        );
         return (
           <div>
             {reports.map(pmr => (
@@ -563,6 +579,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                   key={pmr.private_message_report.id}
                   report={pmr}
                   onResolveReport={this.handleResolvePrivateMessageReport}
+                  myUserInfo={this.isoData.myUserInfo}
                 />
               </>
             ))}
@@ -572,146 +589,205 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  async handlePageChange(page: number) {
-    this.setState({ page });
+  communityReports() {
+    const res = this.state.reportsRes;
+    switch (res.state) {
+      case "loading":
+        return (
+          <h5>
+            <Spinner large />
+          </h5>
+        );
+      case "success": {
+        const reports = res.data.reports.filter(r => r.type_ === "community");
+        return (
+          <div>
+            {reports.map(cr => (
+              <>
+                <hr />
+                <CommunityReport
+                  key={cr.community_report.id}
+                  report={cr}
+                  onResolveReport={this.handleResolveCommunityReport}
+                  myUserInfo={this.isoData.myUserInfo}
+                />
+              </>
+            ))}
+          </div>
+        );
+      }
+    }
+  }
+
+  async handlePageChange(cursor?: DirectionalCursor) {
+    this.setState({ cursor });
     await this.refetch();
   }
 
   async handleUnreadOrAllChange(i: Reports, event: any) {
-    i.setState({ unreadOrAll: Number(event.target.value), page: 1 });
+    i.setState({
+      unreadOrAll: Number(event.target.value),
+      cursor: undefined,
+    });
     await i.refetch();
   }
 
   async handleMessageTypeChange(i: Reports, event: any) {
-    i.setState({ messageType: Number(event.target.value), page: 1 });
-    await i.refetch();
+    switch (event.target.value) {
+      case "all":
+      case "comments":
+      case "posts":
+      case "private_messages":
+      case "communities": {
+        i.setState({
+          messageType: event.target.value,
+          cursor: undefined,
+        });
+        await i.refetch();
+      }
+    }
   }
 
   static async fetchInitialData({
     headers,
-    site,
   }: InitialFetchRequest): Promise<ReportsData> {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
     const unresolved_only = true;
-    const page = 1;
-    const limit = fetchLimit;
 
-    const commentReportsForm: ListCommentReports = {
+    const reportsForm: ListReports = {
       unresolved_only,
-      page,
-      limit,
+      show_community_rule_violations: false,
     };
 
-    const postReportsForm: ListPostReports = {
-      unresolved_only,
-      page,
-      limit,
+    return {
+      reportsRes: await client.listReports(reportsForm),
     };
-
-    const data: ReportsData = {
-      commentReportsRes: await client.listCommentReports(commentReportsForm),
-      postReportsRes: await client.listPostReports(postReportsForm),
-      messageReportsRes: EMPTY_REQUEST,
-    };
-
-    if (amAdmin(site.my_user)) {
-      const privateMessageReportsForm: ListPrivateMessageReports = {
-        unresolved_only,
-        page,
-        limit,
-      };
-
-      data.messageReportsRes = await client.listPrivateMessageReports(
-        privateMessageReportsForm,
-      );
-    }
-
-    return data;
   }
 
   refetchToken?: symbol;
   async refetch() {
     const token = (this.refetchToken = Symbol());
     const unresolved_only = this.state.unreadOrAll === UnreadOrAll.Unread;
-    const page = this.state.page;
-    const limit = fetchLimit;
+    const cursor = this.state.cursor;
 
     this.setState({
-      commentReportsRes: LOADING_REQUEST,
-      postReportsRes: LOADING_REQUEST,
-      messageReportsRes: LOADING_REQUEST,
+      reportsRes: LOADING_REQUEST,
     });
 
-    const form:
-      | ListCommentReports
-      | ListPostReports
-      | ListPrivateMessageReports = {
+    const form: ListReports = {
       unresolved_only,
-      page,
-      limit,
+      type_: this.state.messageType,
+      show_community_rule_violations: this.state.showCommunityRuleViolations,
+      ...cursorComponents(cursor),
     };
 
-    const commentReportPromise = HttpService.client
-      .listCommentReports(form)
-      .then(commentReportsRes => {
+    const reportPromise = HttpService.client
+      .listReports(form)
+      .then(reportsRes => {
         if (token === this.refetchToken) {
-          this.setState({ commentReportsRes });
-        }
-      });
-    const postReportPromise = HttpService.client
-      .listPostReports(form)
-      .then(postReportsRes => {
-        if (token === this.refetchToken) {
-          this.setState({ postReportsRes });
+          this.setState({ reportsRes });
         }
       });
 
-    if (amAdmin()) {
-      const messageReportsRes =
-        await HttpService.client.listPrivateMessageReports(form);
-      if (token === this.refetchToken) {
-        this.setState({ messageReportsRes });
-      }
-    }
-
-    await Promise.all([commentReportPromise, postReportPromise]);
+    await Promise.all([reportPromise]);
   }
 
   async handleResolveCommentReport(form: ResolveCommentReport) {
     const res = await HttpService.client.resolveCommentReport(form);
     this.findAndUpdateCommentReport(res);
-    if (this.state.unreadOrAll === UnreadOrAll.Unread) {
-      this.refetch();
-      UnreadCounterService.Instance.updateReports();
-    }
+    this.update();
   }
 
   async handleResolvePostReport(form: ResolvePostReport) {
     const res = await HttpService.client.resolvePostReport(form);
     this.findAndUpdatePostReport(res);
-    if (this.state.unreadOrAll === UnreadOrAll.Unread) {
-      this.refetch();
-      UnreadCounterService.Instance.updateReports();
-    }
+    this.update();
+  }
+
+  async handleRemovePost(form: RemovePost) {
+    await HttpService.client.removePost(form);
+    this.update();
+  }
+
+  async handleRemoveComment(form: RemoveComment) {
+    await HttpService.client.removeComment(form);
+    this.update();
+  }
+
+  handleModBanFromCommunity(form: BanFromCommunityData) {
+    this.setState({ banFromCommunityForm: form });
+  }
+
+  handleAdminBan(form: BanFromSiteData) {
+    this.setState({ adminBanForm: form });
   }
 
   async handleResolvePrivateMessageReport(form: ResolvePrivateMessageReport) {
     const res = await HttpService.client.resolvePrivateMessageReport(form);
     this.findAndUpdatePrivateMessageReport(res);
-    if (this.state.unreadOrAll === UnreadOrAll.Unread) {
-      this.refetch();
-      UnreadCounterService.Instance.updateReports();
+
+    this.update();
+  }
+
+  async handleResolveCommunityReport(form: ResolveCommunityReport) {
+    const res = await HttpService.client.resolveCommunityReport(form);
+    toast("Not implemented");
+    this.findAndUpdateCommunityReport(res);
+    this.update();
+  }
+
+  async handleSubmitBanFromCommunity(form: BanUpdateForm) {
+    const banFromCommunityForm = this.state.banFromCommunityForm;
+    if (banFromCommunityForm) {
+      await HttpService.client.banFromCommunity({
+        person_id: banFromCommunityForm.person.id,
+        community_id: banFromCommunityForm.community.id,
+        ban: banFromCommunityForm.ban,
+        expires_at: futureDaysToUnixTime(form.daysUntilExpires),
+        reason: form.reason,
+      });
+      this.setState({ banFromCommunityForm: undefined });
+      this.update();
     }
+  }
+
+  async handleSubmitAdminBan(form: BanUpdateForm) {
+    const adminBanForm = this.state.adminBanForm;
+    if (adminBanForm) {
+      await HttpService.client.banPerson({
+        person_id: adminBanForm.person.id,
+        ban: adminBanForm.ban,
+        expires_at: futureDaysToUnixTime(form.daysUntilExpires),
+        reason: form.reason,
+      });
+      this.setState({ adminBanForm: undefined });
+      this.update();
+    }
+  }
+
+  handleCloseModActionModals() {
+    this.setState({
+      adminBanForm: undefined,
+      banFromCommunityForm: undefined,
+    });
+  }
+
+  handleClickshowCommunityReports() {
+    this.setState({
+      showCommunityRuleViolations: !this.state.showCommunityRuleViolations,
+    });
+    this.update();
   }
 
   findAndUpdateCommentReport(res: RequestState<CommentReportResponse>) {
     this.setState(s => {
-      if (s.commentReportsRes.state === "success" && res.state === "success") {
-        s.commentReportsRes.data.comment_reports = editCommentReport(
-          res.data.comment_report_view,
-          s.commentReportsRes.data.comment_reports,
+      if (s.reportsRes.state === "success" && res.state === "success") {
+        s.reportsRes.data.reports = editCombined(
+          { type_: "comment", ...res.data.comment_report_view },
+          s.reportsRes.data.reports,
+          getUncombinedReport,
         );
       }
       return s;
@@ -720,10 +796,11 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
 
   findAndUpdatePostReport(res: RequestState<PostReportResponse>) {
     this.setState(s => {
-      if (s.postReportsRes.state === "success" && res.state === "success") {
-        s.postReportsRes.data.post_reports = editPostReport(
-          res.data.post_report_view,
-          s.postReportsRes.data.post_reports,
+      if (s.reportsRes.state === "success" && res.state === "success") {
+        s.reportsRes.data.reports = editCombined(
+          { type_: "post", ...res.data.post_report_view },
+          s.reportsRes.data.reports,
+          getUncombinedReport,
         );
       }
       return s;
@@ -734,14 +811,32 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     res: RequestState<PrivateMessageReportResponse>,
   ) {
     this.setState(s => {
-      if (s.messageReportsRes.state === "success" && res.state === "success") {
-        s.messageReportsRes.data.private_message_reports =
-          editPrivateMessageReport(
-            res.data.private_message_report_view,
-            s.messageReportsRes.data.private_message_reports,
-          );
+      if (s.reportsRes.state === "success" && res.state === "success") {
+        s.reportsRes.data.reports = editCombined(
+          { type_: "private_message", ...res.data.private_message_report_view },
+          s.reportsRes.data.reports,
+          getUncombinedReport,
+        );
       }
       return s;
     });
+  }
+
+  findAndUpdateCommunityReport(res: RequestState<CommunityReportResponse>) {
+    this.setState(s => {
+      if (s.reportsRes.state === "success" && res.state === "success") {
+        s.reportsRes.data.reports = editCombined(
+          { type_: "community", ...res.data.community_report_view },
+          s.reportsRes.data.reports,
+          getUncombinedReport,
+        );
+      }
+      return s;
+    });
+  }
+
+  update() {
+    UnreadCounterService.Instance.updateReports();
+    this.refetch();
   }
 }

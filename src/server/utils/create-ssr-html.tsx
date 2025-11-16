@@ -3,24 +3,32 @@ import { Helmet } from "inferno-helmet";
 import { renderToString } from "inferno-server";
 import serialize from "serialize-javascript";
 import sharp from "sharp";
-import { favIconPngUrl, favIconUrl } from "../../shared/config";
-import { IsoDataOptionalSite } from "../../shared/interfaces";
+import { favIconPngUrl, favIconUrl } from "@utils/config";
+import { IsoDataOptionalSite } from "@utils/types";
 import { buildThemeList } from "./build-themes-list";
 import { fetchIconPng } from "./fetch-icon-png";
-import { findTranslationChunkNames } from "../../shared/services/I18NextService";
-import { findDateFnsChunkNames } from "../../shared/utils/app/setup-date-fns";
+import { findLanguageChunkNames } from "@services/I18NextService";
+import path from "path";
+import { readFileSync } from "node:fs";
 
 const customHtmlHeader = process.env["LEMMY_UI_CUSTOM_HTML_HEADER"] || "";
 
 let appleTouchIcon: string | undefined = undefined;
 
+let embeddedScript = readFileSync(path.resolve("./dist/js/embedded.js"));
+
 export async function createSsrHtml(
   root: string,
   isoData: IsoDataOptionalSite,
   cspNonce: string,
-  userLanguages: readonly string[],
+  languages: readonly string[],
+  interfaceLanguage?: string,
 ) {
-  const site = isoData.site_res;
+  const site = isoData.siteRes;
+
+  if (process.env["NODE_ENV"] === "development") {
+    embeddedScript = readFileSync(path.resolve("./dist/js/embedded.js"));
+  }
 
   const fallbackTheme = `<link rel="stylesheet" type="text/css" href="/css/themes/${
     (await buildThemeList())[0]
@@ -51,7 +59,7 @@ export async function createSsrHtml(
             .then(buf => buf.toString("base64"))}`
         : favIconPngUrl;
     } catch {
-      console.log(
+      console.warn(
         "Could not fetch site logo for apple touch icon. Using default icon.",
       );
       appleTouchIcon = favIconPngUrl;
@@ -59,7 +67,7 @@ export async function createSsrHtml(
   }
 
   const erudaStr =
-    process.env["LEMMY_UI_DEBUG"] === "true"
+    process.env["NODE_ENV"] === "development"
       ? renderToString(
           <>
             <script
@@ -73,10 +81,7 @@ export async function createSsrHtml(
 
   const helmet = Helmet.renderStatic();
 
-  const lazyScripts = [
-    ...findTranslationChunkNames(userLanguages),
-    ...findDateFnsChunkNames(userLanguages),
-  ]
+  const lazyScripts = findLanguageChunkNames(languages, interfaceLanguage)
     .filter(x => x !== undefined)
     .map(x => `${getStaticDir()}/js/${x}.client.js`)
     .map(x => `<link rel="preload" as="script" href="${x}" />`)
@@ -89,10 +94,7 @@ export async function createSsrHtml(
     <script nonce="${cspNonce}">
     window.isoData = ${serialize(isoData)};
 
-    if (!document.documentElement.hasAttribute("data-bs-theme")) {
-      const light = window.matchMedia("(prefers-color-scheme: light)").matches;
-      document.documentElement.setAttribute("data-bs-theme", light ? "light" : "dark");
-    }
+    ${embeddedScript}
     </script>
     ${lazyScripts}
   

@@ -1,20 +1,34 @@
 import classNames from "classnames";
 import { Component, linkEvent } from "inferno";
-import { PersonView, Site, SiteAggregates } from "lemmy-js-client";
-import { mdToHtml } from "../../markdown";
+import {
+  Language,
+  LocalSite,
+  MyUserInfo,
+  PersonView,
+  Site,
+} from "lemmy-js-client";
+import { mdToHtml } from "@utils/markdown";
 import { I18NextService } from "../../services";
-import { Badges } from "../common/badges";
+import { LocalSiteBadges } from "../common/badges";
 import { BannerIconHeader } from "../common/banner-icon-header";
 import { Icon } from "../common/icon";
 import { PersonListing } from "../person/person-listing";
 import { tippyMixin } from "../mixins/tippy-mixin";
+import { LanguageList } from "@components/common/language-list";
+import {
+  CreateCommunityButton,
+  CreateMultiCommunityButton,
+  CreatePostButton,
+} from "@components/common/content-actions/create-item-buttons";
 
 interface SiteSidebarProps {
   site: Site;
-  showLocal: boolean;
-  counts?: SiteAggregates;
+  localSite?: LocalSite;
   admins?: PersonView[];
   isMobile?: boolean;
+  myUserInfo: MyUserInfo | undefined;
+  allLanguages?: Language[];
+  siteLanguages?: number[];
 }
 
 interface SiteSidebarState {
@@ -34,7 +48,7 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
   render() {
     return (
       <div className="site-sidebar accordion">
-        <section id="sidebarInfo" className="card border-secondary mb-3">
+        <section id="sidebarInfo" className="card mb-3">
           <header className="card-header" id="sidebarInfoHeader">
             {this.siteName()}
             {!this.state.collapsed && (
@@ -88,12 +102,25 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
   }
 
   siteInfo() {
-    const site = this.props.site;
+    const { site } = this.props;
+
     return (
       <div>
         {site.description && <h6>{site.description}</h6>}
         {site.sidebar && this.siteSidebar(site.sidebar)}
-        {this.props.counts && <Badges counts={this.props.counts} />}
+        <LanguageList
+          allLanguages={this.props.allLanguages}
+          languageIds={this.props.siteLanguages}
+        />
+        <CreatePostButton />
+        <CreateCommunityButton
+          localSite={this.props.localSite}
+          myUserInfo={this.props.myUserInfo}
+        />
+        <CreateMultiCommunityButton myUserInfo={this.props.myUserInfo} />
+        {this.props.localSite && (
+          <LocalSiteBadges localSite={this.props.localSite} />
+        )}
         {this.props.admins && this.admins(this.props.admins)}
       </div>
     );
@@ -102,7 +129,7 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
   siteSidebar(sidebar: string) {
     return (
       <div
-        className="md-div"
+        className="md-div mb-2"
         dangerouslySetInnerHTML={mdToHtml(sidebar, () => this.forceUpdate())}
       />
     );
@@ -114,7 +141,11 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
         <li className="list-inline-item">{I18NextService.i18n.t("admins")}:</li>
         {admins.map(av => (
           <li key={av.person.id} className="list-inline-item">
-            <PersonListing person={av.person} />
+            <PersonListing
+              person={av.person}
+              banned={av.banned}
+              myUserInfo={this.props.myUserInfo}
+            />
           </li>
         ))}
       </ul>

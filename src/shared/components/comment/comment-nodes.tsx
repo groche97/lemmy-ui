@@ -6,9 +6,9 @@ import {
   AddModToCommunity,
   BanFromCommunity,
   BanPerson,
+  BlockCommunity,
   BlockPerson,
-  CommentResponse,
-  CommunityModeratorView,
+  Community,
   CreateComment,
   CreateCommentLike,
   CreateCommentReport,
@@ -17,9 +17,11 @@ import {
   EditComment,
   GetComments,
   Language,
-  LocalUserVoteDisplayMode,
-  MarkCommentReplyAsRead,
-  MarkPersonMentionAsRead,
+  LocalSite,
+  LockComment,
+  MyUserInfo,
+  NotePerson,
+  PersonId,
   PersonView,
   PurgeComment,
   PurgePerson,
@@ -27,53 +29,56 @@ import {
   SaveComment,
   TransferCommunity,
 } from "lemmy-js-client";
-import { CommentNodeI, CommentViewType } from "../../interfaces";
+import { CommentViewType, CommentNodeType } from "@utils/types";
 import { CommentNode } from "./comment-node";
-import { RequestState } from "../../services/HttpService";
 
 interface CommentNodesProps {
-  nodes: CommentNodeI[];
-  moderators?: CommunityModeratorView[];
-  admins?: PersonView[];
+  nodes: CommentNodeType[];
+  /**
+   * Only use this for the CommentSlim variant.
+   **/
+  postCreatorId?: PersonId;
+  /**
+   * Only use this for the CommentSlim variant.
+   **/
+  community?: Community;
+  admins: PersonView[];
+  readCommentsAt?: string;
   maxCommentsShown?: number;
   noBorder?: boolean;
   isTopLevel?: boolean;
   viewOnly?: boolean;
-  locked?: boolean;
-  markable?: boolean;
-  showContext?: boolean;
-  showCommunity?: boolean;
-  enableDownvotes?: boolean;
-  voteDisplayMode: LocalUserVoteDisplayMode;
+  postLockedOrRemovedOrDeleted?: boolean;
+  showContext: boolean;
+  showCommunity: boolean;
   viewType: CommentViewType;
   allLanguages: Language[];
   siteLanguages: number[];
-  hideImages?: boolean;
+  hideImages: boolean;
   isChild?: boolean;
   depth?: number;
-  onSaveComment(form: SaveComment): Promise<void>;
-  onCommentReplyRead(form: MarkCommentReplyAsRead): void;
-  onPersonMentionRead(form: MarkPersonMentionAsRead): void;
-  onCreateComment(
-    form: EditComment | CreateComment,
-  ): Promise<RequestState<CommentResponse>>;
-  onEditComment(
-    form: EditComment | CreateComment,
-  ): Promise<RequestState<CommentResponse>>;
-  onCommentVote(form: CreateCommentLike): Promise<void>;
-  onBlockPerson(form: BlockPerson): Promise<void>;
-  onDeleteComment(form: DeleteComment): Promise<void>;
-  onRemoveComment(form: RemoveComment): Promise<void>;
-  onDistinguishComment(form: DistinguishComment): Promise<void>;
-  onAddModToCommunity(form: AddModToCommunity): Promise<void>;
-  onAddAdmin(form: AddAdmin): Promise<void>;
-  onBanPersonFromCommunity(form: BanFromCommunity): Promise<void>;
-  onBanPerson(form: BanPerson): Promise<void>;
-  onTransferCommunity(form: TransferCommunity): Promise<void>;
+  myUserInfo: MyUserInfo | undefined;
+  localSite: LocalSite;
+  onSaveComment(form: SaveComment): void;
+  onCreateComment(form: CreateComment): void;
+  onEditComment(form: EditComment): void;
+  onCommentVote(form: CreateCommentLike): void;
+  onBlockPerson(form: BlockPerson): void;
+  onBlockCommunity(form: BlockCommunity): void;
+  onDeleteComment(form: DeleteComment): void;
+  onRemoveComment(form: RemoveComment): void;
+  onDistinguishComment(form: DistinguishComment): void;
+  onAddModToCommunity(form: AddModToCommunity): void;
+  onAddAdmin(form: AddAdmin): void;
+  onBanPersonFromCommunity(form: BanFromCommunity): void;
+  onBanPerson(form: BanPerson): void;
+  onTransferCommunity(form: TransferCommunity): void;
   onFetchChildren?(form: GetComments): void;
-  onCommentReport(form: CreateCommentReport): Promise<void>;
-  onPurgePerson(form: PurgePerson): Promise<void>;
-  onPurgeComment(form: PurgeComment): Promise<void>;
+  onCommentReport(form: CreateCommentReport): void;
+  onPurgePerson(form: PurgePerson): void;
+  onPurgeComment(form: PurgeComment): void;
+  onPersonNote(form: NotePerson): void;
+  onLockComment(form: LockComment): void;
 }
 
 export class CommentNodes extends Component<CommentNodesProps, any> {
@@ -103,29 +108,29 @@ export class CommentNodes extends Component<CommentNodesProps, any> {
         >
           {this.props.nodes.slice(0, maxComments).map(node => (
             <CommentNode
-              key={node.comment_view.comment.id}
+              key={node.view.comment_view.comment.id}
               node={node}
               noBorder={this.props.noBorder}
               isTopLevel={this.props.isTopLevel}
               viewOnly={this.props.viewOnly}
-              locked={this.props.locked}
-              moderators={this.props.moderators}
+              postLockedOrRemovedOrDeleted={
+                this.props.postLockedOrRemovedOrDeleted
+              }
               admins={this.props.admins}
-              markable={this.props.markable}
+              readCommentsAt={this.props.readCommentsAt}
               showContext={this.props.showContext}
               showCommunity={this.props.showCommunity}
-              enableDownvotes={this.props.enableDownvotes}
-              voteDisplayMode={this.props.voteDisplayMode}
               viewType={this.props.viewType}
               allLanguages={this.props.allLanguages}
               siteLanguages={this.props.siteLanguages}
               hideImages={this.props.hideImages}
-              onCommentReplyRead={this.props.onCommentReplyRead}
-              onPersonMentionRead={this.props.onPersonMentionRead}
+              myUserInfo={this.props.myUserInfo}
+              localSite={this.props.localSite}
               onCreateComment={this.props.onCreateComment}
               onEditComment={this.props.onEditComment}
               onCommentVote={this.props.onCommentVote}
               onBlockPerson={this.props.onBlockPerson}
+              onBlockCommunity={this.props.onBlockCommunity}
               onSaveComment={this.props.onSaveComment}
               onDeleteComment={this.props.onDeleteComment}
               onRemoveComment={this.props.onRemoveComment}
@@ -139,6 +144,8 @@ export class CommentNodes extends Component<CommentNodesProps, any> {
               onCommentReport={this.props.onCommentReport}
               onPurgePerson={this.props.onPurgePerson}
               onPurgeComment={this.props.onPurgeComment}
+              onPersonNote={this.props.onPersonNote}
+              onLockComment={this.props.onLockComment}
             />
           ))}
         </ul>

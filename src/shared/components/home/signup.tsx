@@ -1,4 +1,4 @@
-import { setIsoData } from "@utils/app";
+import { setIsoData, updateMyUserInfo } from "@utils/app";
 import { isBrowser } from "@utils/browser";
 import { getQueryParams, resourcesSettled, validEmail } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
@@ -6,12 +6,11 @@ import { Component, linkEvent } from "inferno";
 import {
   CaptchaResponse,
   GetCaptchaResponse,
-  GetSiteResponse,
   LoginResponse,
   SiteView,
 } from "lemmy-js-client";
-import { validActorRegexPattern } from "../../config";
-import { mdToHtml } from "../../markdown";
+import { validActorRegexPattern } from "@utils/config";
+import { mdToHtml } from "@utils/markdown";
 import { I18NextService, UserService } from "../../services";
 import {
   EMPTY_REQUEST,
@@ -19,15 +18,16 @@ import {
   LOADING_REQUEST,
   RequestState,
 } from "../../services/HttpService";
-import { toast } from "../../toast";
+import { toast } from "@utils/app";
 import { HtmlTags } from "../common/html-tags";
 import { Icon, Spinner } from "../common/icon";
 import { MarkdownTextArea } from "../common/markdown-textarea";
 import PasswordInput from "../common/password-input";
 import { RouteComponentProps } from "inferno-router/dist/Route";
-import { RouteData } from "../../interfaces";
-import { IRoutePropsWithFetch } from "../../routes";
+import { RouteData } from "@utils/types";
+import { IRoutePropsWithFetch } from "@utils/routes";
 import { handleUseOAuthProvider } from "./login";
+import { secondsDurationToAlertClass, secondsDurationToStr } from "@utils/date";
 
 interface SignupProps {
   sso_provider_id?: string;
@@ -46,9 +46,9 @@ interface State {
     captcha_answer?: string;
     honeypot?: string;
     answer?: string;
+    stay_logged_in: boolean;
   };
   captchaPlaying: boolean;
-  siteRes: GetSiteResponse;
 }
 
 export function getSignupQueryParams(source?: string): SignupProps {
@@ -70,22 +70,22 @@ export type SignupFetchConfig = IRoutePropsWithFetch<
 
 @scrollMixin
 export class Signup extends Component<SignupRouteProps, State> {
-  private isoData = setIsoData(this.context);
+  public isoData = setIsoData(this.context);
   private audio?: HTMLAudioElement;
 
   state: State = {
     registerRes: EMPTY_REQUEST,
     captchaRes: EMPTY_REQUEST,
     form: {
-      show_nsfw: !!this.isoData.site_res.site_view.site.content_warning,
+      show_nsfw: !!this.isoData.siteRes?.site_view.site.content_warning,
+      stay_logged_in: false,
     },
     captchaPlaying: false,
-    siteRes: this.isoData.site_res,
   };
 
   loadingSettled() {
     return (
-      !this.state.siteRes.site_view.local_site.captcha_enabled ||
+      !this.isoData.siteRes?.site_view.local_site.captcha_enabled ||
       resourcesSettled([this.state.captchaRes])
     );
   }
@@ -98,7 +98,7 @@ export class Signup extends Component<SignupRouteProps, State> {
 
   async componentWillMount() {
     if (
-      this.state.siteRes.site_view.local_site.captcha_enabled &&
+      this.isoData.siteRes?.site_view.local_site.captcha_enabled &&
       isBrowser()
     ) {
       await this.fetchCaptcha();
@@ -120,13 +120,13 @@ export class Signup extends Component<SignupRouteProps, State> {
   }
 
   get documentTitle(): string {
-    const siteView = this.state.siteRes.site_view;
-    return `${this.titleName(siteView)} - ${siteView.site.name}`;
+    const siteView = this.isoData.siteRes?.site_view;
+    return `${this.titleName(siteView)} - ${siteView?.site.name}`;
   }
 
-  titleName(siteView: SiteView): string {
+  titleName(siteView?: SiteView): string {
     return I18NextService.i18n.t(
-      siteView.local_site.private_instance ? "apply_to_join" : "sign_up",
+      siteView?.local_site.private_instance ? "apply_to_join" : "sign_up",
     );
   }
 
@@ -147,8 +147,10 @@ export class Signup extends Component<SignupRouteProps, State> {
   }
 
   registerForm() {
-    const siteView = this.state.siteRes.site_view;
+    const siteView = this.isoData.siteRes?.site_view;
     const oauth_provider = getOAuthProvider(this);
+    const lastApplicationDurationSeconds =
+      this.isoData.siteRes.last_application_duration_seconds;
 
     return (
       <form
@@ -196,17 +198,17 @@ export class Signup extends Component<SignupRouteProps, State> {
                     id="register-email"
                     className="form-control"
                     placeholder={
-                      siteView.local_site.require_email_verification
+                      siteView?.local_site.require_email_verification
                         ? I18NextService.i18n.t("required")
                         : I18NextService.i18n.t("optional")
                     }
                     value={this.state.form.email}
                     autoComplete="email"
                     onInput={linkEvent(this, this.handleRegisterEmailChange)}
-                    required={siteView.local_site.require_email_verification}
+                    required={siteView?.local_site.require_email_verification}
                     minLength={3}
                   />
-                  {!siteView.local_site.require_email_verification &&
+                  {!siteView?.local_site.require_email_verification &&
                     this.state.form.email &&
                     !validEmail(this.state.form.email) && (
                       <div
@@ -254,7 +256,7 @@ export class Signup extends Component<SignupRouteProps, State> {
           </>
         )}
 
-        {siteView.local_site.registration_mode === "RequireApplication" && (
+        {siteView?.local_site.registration_mode === "require_application" && (
           <>
             <div className="mb-3 row">
               <div className="offset-sm-2 col-sm-10">
@@ -288,27 +290,44 @@ export class Signup extends Component<SignupRouteProps, State> {
                   hideNavigationWarnings
                   allLanguages={[]}
                   siteLanguages={[]}
-                  renderAsDiv={true}
+                  renderAsDiv
+                  myUserInfo={this.isoData.myUserInfo}
                 />
               </div>
             </div>
+            {lastApplicationDurationSeconds && (
+              <div className="mb-3 row">
+                <div className="offset-sm-2 col-sm-10">
+                  <div
+                    className={secondsDurationToAlertClass(
+                      lastApplicationDurationSeconds,
+                    )}
+                    role="alert"
+                  >
+                    {I18NextService.i18n.t("estimated_approval_time", {
+                      time: secondsDurationToStr(
+                        lastApplicationDurationSeconds,
+                      ),
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
         {this.renderCaptcha()}
-        <div className="mb-3 row">
-          <div className="col-sm-10">
-            <div className="form-check">
-              <input
-                className="form-check-input"
-                id="register-show-nsfw"
-                type="checkbox"
-                checked={this.state.form.show_nsfw}
-                onChange={linkEvent(this, this.handleRegisterShowNsfwChange)}
-              />
-              <label className="form-check-label" htmlFor="register-show-nsfw">
-                {I18NextService.i18n.t("show_nsfw")}
-              </label>
-            </div>
+        <div className="mb-3">
+          <div className="form-check">
+            <input
+              className="form-check-input"
+              id="register-show-nsfw"
+              type="checkbox"
+              checked={this.state.form.show_nsfw}
+              onChange={linkEvent(this, this.handleRegisterShowNsfwChange)}
+            />
+            <label className="form-check-label" htmlFor="register-show-nsfw">
+              {I18NextService.i18n.t("show_nsfw")}
+            </label>
           </div>
         </div>
         <input
@@ -321,6 +340,23 @@ export class Signup extends Component<SignupRouteProps, State> {
           value={this.state.form.honeypot}
           onInput={linkEvent(this, this.handleHoneyPotChange)}
         />
+        <div className="input-group mb-3">
+          <div className="form-check">
+            <input
+              className="form-check-input"
+              id="register-stay-logged-in"
+              type="checkbox"
+              checked={this.state.form.stay_logged_in}
+              onChange={linkEvent(this, this.handleStayLoggedInChange)}
+            />
+            <label
+              className="form-check-label"
+              htmlFor="register-stay-logged-in"
+            >
+              {I18NextService.i18n.t("stay_logged_in")}
+            </label>
+          </div>
+        </div>
         <div className="mb-3 row">
           <div className="col-sm-10">
             <button type="submit" className="btn btn-secondary">
@@ -424,6 +460,7 @@ export class Signup extends Component<SignupRouteProps, State> {
       password,
       password_verify,
       username,
+      stay_logged_in,
     } = i.state.form;
 
     const oauthProvider = getOAuthProvider(i);
@@ -451,6 +488,7 @@ export class Signup extends Component<SignupRouteProps, State> {
         captcha_answer,
         honeypot,
         answer,
+        stay_logged_in,
       });
       switch (registerRes.state) {
         case "failed": {
@@ -468,10 +506,10 @@ export class Signup extends Component<SignupRouteProps, State> {
               res: data,
             });
 
-            const site = await HttpService.client.getSite();
+            const myUserRes = await HttpService.client.getMyUser();
 
-            if (site.state === "success") {
-              UserService.Instance.myUserInfo = site.data.my_user;
+            if (myUserRes.state === "success") {
+              updateMyUserInfo(myUserRes.data);
             }
 
             i.props.history.replace("/communities");
@@ -515,6 +553,11 @@ export class Signup extends Component<SignupRouteProps, State> {
 
   handleRegisterShowNsfwChange(i: Signup, event: any) {
     i.state.form.show_nsfw = event.target.checked;
+    i.setState(i.state);
+  }
+
+  handleStayLoggedInChange(i: Signup, event: any) {
+    i.state.form.stay_logged_in = event.target.checked;
     i.setState(i.state);
   }
 
@@ -567,7 +610,7 @@ export class Signup extends Component<SignupRouteProps, State> {
 }
 
 function getOAuthProvider(signup: Signup) {
-  return (signup.state.siteRes.oauth_providers ?? []).find(
+  return (signup.isoData.siteRes?.oauth_providers ?? []).find(
     provider => provider.id === Number(signup.props?.sso_provider_id ?? -1),
   );
 }

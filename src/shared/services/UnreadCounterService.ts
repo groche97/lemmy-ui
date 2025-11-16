@@ -1,26 +1,20 @@
-import { UserService, HttpService } from "../services";
-import { updateUnreadCountsInterval } from "../config";
+import { HttpService } from "@services/index";
+import { updateUnreadCountsInterval } from "@utils/config";
 import { poll } from "@utils/helpers";
 import { myAuth } from "@utils/app";
-import { amAdmin } from "@utils/roles";
-import { isBrowser } from "@utils/browser";
+import { amAdmin, moderatesSomething } from "@utils/roles";
 import { BehaviorSubject } from "rxjs";
+import { MyUserInfo } from "lemmy-js-client";
 
 /**
  * Service to poll and keep track of unread messages / notifications.
  */
 export class UnreadCounterService {
-  // fetched by HttpService.getUnreadCount, appear in inbox
-  unreadPrivateMessages = 0;
-  unreadReplies = 0;
-  unreadMentions = 0;
-  public unreadInboxCountSubject: BehaviorSubject<number> =
+  // fetched by HttpService.getUnreadCount, appear in notifications
+  public unreadCountSubject: BehaviorSubject<number> =
     new BehaviorSubject<number>(0);
 
   // fetched by HttpService.getReportCount, appear in report page
-  commentReportCount = 0;
-  postReportCount = 0;
-  messageReportCount = 0;
   public unreadReportCountSubject: BehaviorSubject<number> =
     new BehaviorSubject<number>(0);
 
@@ -28,13 +22,16 @@ export class UnreadCounterService {
   public unreadApplicationCountSubject: BehaviorSubject<number> =
     new BehaviorSubject<number>(0);
 
-  static #instance: UnreadCounterService;
+  // fetched by HttpService.getCommunityPendingFollowsCount, appear in pending follows page
+  public pendingFollowCountSubject: BehaviorSubject<number> =
+    new BehaviorSubject<number>(0);
 
-  constructor() {
-    if (isBrowser()) {
-      poll(async () => this.updateAll(), updateUnreadCountsInterval);
-    }
-  }
+  private enableUnreadCounts: boolean = false;
+  private enableReports: boolean = false;
+  private enableApplications: boolean = false;
+  private polling: boolean = false;
+
+  static #instance: UnreadCounterService;
 
   private get shouldUpdate() {
     if (window.document.visibilityState === "hidden") {
@@ -46,39 +43,36 @@ export class UnreadCounterService {
     return true;
   }
 
-  public async updateInboxCounts() {
-    if (this.shouldUpdate) {
+  public configure(myUserInfo: MyUserInfo | undefined) {
+    this.enableUnreadCounts = !!myUserInfo;
+    this.enableReports = moderatesSomething(myUserInfo);
+    this.enableApplications = amAdmin(myUserInfo);
+    if (!this.polling) {
+      this.polling = true;
+      poll(async () => this.updateAll(), updateUnreadCountsInterval);
+    }
+  }
+
+  public async updateUnreadCounts() {
+    if (this.shouldUpdate && this.enableUnreadCounts) {
       const unreadCountRes = await HttpService.client.getUnreadCount();
       if (unreadCountRes.state === "success") {
-        this.unreadPrivateMessages = unreadCountRes.data.private_messages;
-        this.unreadReplies = unreadCountRes.data.replies;
-        this.unreadMentions = unreadCountRes.data.mentions;
-        this.unreadInboxCountSubject.next(
-          this.unreadPrivateMessages + this.unreadReplies + this.unreadMentions,
-        );
+        this.unreadCountSubject.next(unreadCountRes.data.count);
       }
     }
   }
 
   public async updateReports() {
-    if (this.shouldUpdate && UserService.Instance.moderatesSomething) {
+    if (this.shouldUpdate && this.enableReports) {
       const reportCountRes = await HttpService.client.getReportCount({});
       if (reportCountRes.state === "success") {
-        this.commentReportCount = reportCountRes.data.comment_reports ?? 0;
-        this.postReportCount = reportCountRes.data.post_reports ?? 0;
-        this.messageReportCount =
-          reportCountRes.data.private_message_reports ?? 0;
-        this.unreadReportCountSubject.next(
-          this.commentReportCount +
-            this.postReportCount +
-            this.messageReportCount,
-        );
+        this.unreadReportCountSubject.next(reportCountRes.data.count);
       }
     }
   }
 
   public async updateApplications() {
-    if (this.shouldUpdate && amAdmin()) {
+    if (this.shouldUpdate && this.enableApplications) {
       const unreadApplicationsRes =
         await HttpService.client.getUnreadRegistrationApplicationCount();
       if (unreadApplicationsRes.state === "success") {
@@ -89,10 +83,21 @@ export class UnreadCounterService {
     }
   }
 
+  public async updatePendingFollows() {
+    if (this.shouldUpdate) {
+      const pendingFollowsRes =
+        await HttpService.client.getCommunityPendingFollowsCount();
+      if (pendingFollowsRes.state === "success") {
+        this.pendingFollowCountSubject.next(pendingFollowsRes.data.count);
+      }
+    }
+  }
+
   public async updateAll() {
-    this.updateInboxCounts();
+    this.updateUnreadCounts();
     this.updateReports();
     this.updateApplications();
+    this.updatePendingFollows();
   }
 
   static get Instance() {

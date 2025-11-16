@@ -1,11 +1,12 @@
 import { Component } from "inferno";
 import { Helmet } from "inferno-helmet";
-import { UserService } from "../../services";
 import { dataBsTheme, isBrowser } from "@utils/browser";
 import { CodeTheme } from "./code-theme";
+import { MyUserInfo } from "lemmy-js-client";
 
 interface Props {
   defaultTheme: string;
+  myUserInfo: MyUserInfo | undefined;
 }
 
 interface State {
@@ -15,7 +16,7 @@ interface State {
 
 export class Theme extends Component<Props, State> {
   private lightQuery?: MediaQueryList;
-  constructor(props, context) {
+  constructor(props: any, context: any) {
     super(props, context);
     if (isBrowser()) {
       window.addEventListener("refresh-theme", this.eventListener);
@@ -54,9 +55,9 @@ export class Theme extends Component<Props, State> {
   }
 
   currentTheme(): string {
-    const user = UserService.Instance.myUserInfo;
+    const user = this.props.myUserInfo;
     const userTheme = user?.local_user_view.local_user.theme;
-    return userTheme ?? "browser";
+    return userTheme ?? "instance";
   }
 
   render() {
@@ -75,7 +76,7 @@ export class Theme extends Component<Props, State> {
   }
 
   renderTheme(theme: string) {
-    const hasTheme = theme !== "browser" && theme !== "browser-compact";
+    const hasTheme = theme !== "instance" && theme !== "instance-compact";
 
     const detectedBsTheme = {};
     if (this.lightQuery) {
@@ -98,8 +99,8 @@ export class Theme extends Component<Props, State> {
         </>
       );
     } else if (
-      this.props.defaultTheme !== "browser" &&
-      this.props.defaultTheme !== "browser-compact"
+      this.props.defaultTheme !== "instance" &&
+      this.props.defaultTheme !== "instance-compact"
     ) {
       return (
         <>
@@ -118,8 +119,8 @@ export class Theme extends Component<Props, State> {
         </>
       );
     } else if (
-      this.props.defaultTheme === "browser-compact" ||
-      theme === "browser-compact"
+      this.props.defaultTheme === "instance-compact" ||
+      theme === "instance-compact"
     ) {
       return (
         <>
@@ -139,7 +140,7 @@ export class Theme extends Component<Props, State> {
               media="(prefers-color-scheme: no-preference), (prefers-color-scheme: dark)"
             />
           </Helmet>
-          <CodeTheme theme="browser-compact" />
+          <CodeTheme theme="instance-compact" />
         </>
       );
     } else {
@@ -161,7 +162,7 @@ export class Theme extends Component<Props, State> {
               media="(prefers-color-scheme: no-preference), (prefers-color-scheme: dark)"
             />
           </Helmet>
-          <CodeTheme theme="browser" />
+          <CodeTheme theme="instance" />
         </>
       );
     }

@@ -1,4 +1,5 @@
-import { setupDateFns } from "@utils/app";
+/* eslint no-console: "off" */
+
 import { getStaticDir } from "@utils/env";
 import { VERSION } from "../shared/version";
 import express from "express";
@@ -13,8 +14,9 @@ import ThemeHandler from "./handlers/theme-handler";
 import ThemesListHandler from "./handlers/themes-list-handler";
 import { setCacheControl, setDefaultCsp } from "./middleware";
 import CodeThemeHandler from "./handlers/code-theme-handler";
-import { verifyDynamicImports } from "../shared/dynamic-imports";
+import { verifyDynamicImports } from "@utils/dynamic-imports";
 import cookieParser from "cookie-parser";
+import { setupMarkdown } from "@utils/markdown";
 
 const server = express();
 server.use(cookieParser());
@@ -42,11 +44,8 @@ server.use(express.urlencoded({ extended: false }));
 
 const serverPath = path.resolve("./dist");
 
-// In debug mode, don't use the maxAge and immutable, or it breaks live reload for dev
-if (
-  process.env["LEMMY_UI_DEBUG"] ||
-  process.env["NODE_ENV"] === "development"
-) {
+// In dev mode, don't use the maxAge and immutable, or it breaks live reload for dev
+if (process.env["NODE_ENV"] === "development") {
   server.use(getStaticDir(), express.static(serverPath));
 } else {
   server.use(
@@ -62,7 +61,6 @@ if (
 // Only set the CSP if not in debug mode
 if (
   !process.env["LEMMY_UI_DISABLE_CSP"] &&
-  !process.env["LEMMY_UI_DEBUG"] &&
   process.env["NODE_ENV"] !== "development"
 ) {
   server.use(setDefaultCsp);
@@ -80,7 +78,8 @@ server.get("/{*splat}", CatchAllHandler);
 const listener = server.listen(Number(port), hostname, () => {
   verifyDynamicImports(true);
 
-  setupDateFns();
+  setupMarkdown();
+
   console.log(
     `Lemmy-ui v${VERSION} started listening on http://${hostname}:${port}`,
   );

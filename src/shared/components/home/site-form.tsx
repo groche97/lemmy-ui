@@ -1,19 +1,17 @@
-import { capitalizeFirstLetter, validInstanceTLD } from "@utils/helpers";
-import {
-  Component,
-  InfernoKeyboardEvent,
-  InfernoNode,
-  linkEvent,
-} from "inferno";
+import { capitalizeFirstLetter } from "@utils/helpers";
+import { Component, linkEvent } from "inferno";
 import { Prompt } from "inferno-router";
 import {
+  CommentSortType,
   CreateSite,
   EditSite,
+  FederationMode,
   GetSiteResponse,
-  Instance,
   ListingType,
+  MyUserInfo,
+  PostListingMode,
+  PostSortType,
 } from "lemmy-js-client";
-import deepEqual from "lodash.isequal";
 import { I18NextService } from "../../services";
 import { Icon, Spinner } from "../common/icon";
 import { ImageUploadForm } from "../common/image-upload-form";
@@ -21,72 +19,72 @@ import { LanguageSelect } from "../common/language-select";
 import { ListingTypeSelect } from "../common/listing-type-select";
 import { MarkdownTextArea } from "../common/markdown-textarea";
 import UrlListTextarea from "../common/url-list-textarea";
+import { FormEvent } from "inferno";
+import { FederationModeSelect } from "./federation-mode-select";
+import {
+  CommentSortSelect,
+  PostSortSelect,
+} from "@components/common/sort-select";
+import { TimeIntervalSelect } from "@components/common/time-interval-select";
+import { PostListingModeSelect } from "@components/common/post-listing-mode-select";
 
 interface SiteFormProps {
-  blockedInstances?: Instance[];
-  allowedInstances?: Instance[];
   showLocal?: boolean;
   themeList?: string[];
   onSaveSite(form: EditSite): void;
   siteRes: GetSiteResponse;
   loading: boolean;
+  myUserInfo: MyUserInfo | undefined;
 }
 
 interface SiteFormState {
   siteForm: EditSite;
-  instance_select: {
-    allowed_instances: string;
-    blocked_instances: string;
-  };
   submitted: boolean;
+  icon?: string;
+  banner?: string;
 }
-
-type InstanceKey = "allowed_instances" | "blocked_instances";
 
 export class SiteForm extends Component<SiteFormProps, SiteFormState> {
   state: SiteFormState = {
     siteForm: this.initSiteForm(),
-    instance_select: {
-      allowed_instances: "",
-      blocked_instances: "",
-    },
     submitted: false,
   };
 
   initSiteForm(): EditSite {
-    const site = this.props.siteRes.site_view.site;
-    const ls = this.props.siteRes.site_view.local_site;
+    const site = this.props.siteRes?.site_view.site;
+    const ls = this.props.siteRes?.site_view.local_site;
 
     return {
-      name: site.name,
-      sidebar: site.sidebar,
-      description: site.description,
-      enable_downvotes: ls.enable_downvotes,
-      registration_mode: ls.registration_mode,
-      oauth_registration: ls.oauth_registration,
-      community_creation_admin_only: ls.community_creation_admin_only,
-      icon: site.icon,
-      banner: site.banner,
-      require_email_verification: ls.require_email_verification,
-      application_question: ls.application_question,
-      private_instance: ls.private_instance,
-      default_theme: ls.default_theme,
-      default_post_listing_type: ls.default_post_listing_type,
-      legal_information: ls.legal_information,
-      application_email_admins: ls.application_email_admins,
-      reports_email_admins: ls.reports_email_admins,
-      hide_modlog_mod_names: ls.hide_modlog_mod_names,
-      discussion_languages: this.props.siteRes.discussion_languages,
-      slur_filter_regex: ls.slur_filter_regex,
-      actor_name_max_length: ls.actor_name_max_length,
-      federation_enabled: ls.federation_enabled,
-      captcha_enabled: ls.captcha_enabled,
-      captcha_difficulty: ls.captcha_difficulty,
-      allowed_instances: this.props.allowedInstances?.map(i => i.domain),
-      blocked_instances: this.props.blockedInstances?.map(i => i.domain),
-      blocked_urls: this.props.siteRes.blocked_urls.map(u => u.url),
-      content_warning: this.props.siteRes.site_view.site.content_warning,
-      enable_nsfw: !!this.props.siteRes.site_view.site.content_warning,
+      name: site?.name,
+      sidebar: site?.sidebar,
+      description: site?.description,
+      registration_mode: ls?.registration_mode,
+      oauth_registration: ls?.oauth_registration,
+      community_creation_admin_only: ls?.community_creation_admin_only,
+      post_upvotes: ls?.post_upvotes,
+      post_downvotes: ls?.post_downvotes,
+      comment_upvotes: ls?.comment_upvotes,
+      comment_downvotes: ls?.comment_downvotes,
+      require_email_verification: ls?.require_email_verification,
+      application_question: ls?.application_question,
+      private_instance: ls?.private_instance,
+      default_theme: ls?.default_theme,
+      default_post_listing_type: ls?.default_post_listing_type,
+      legal_information: ls?.legal_information,
+      application_email_admins: ls?.application_email_admins,
+      reports_email_admins: ls?.reports_email_admins,
+      discussion_languages: this.props.siteRes?.discussion_languages,
+      slur_filter_regex: ls?.slur_filter_regex,
+      federation_enabled: ls?.federation_enabled,
+      captcha_enabled: ls?.captcha_enabled,
+      captcha_difficulty: ls?.captcha_difficulty,
+      blocked_urls: this.props.siteRes?.blocked_urls.map(u => u.url),
+      content_warning: this.props.siteRes?.site_view.site.content_warning,
+      disable_email_notifications: ls?.disable_email_notifications,
+      default_items_per_page: ls?.default_items_per_page,
+      default_comment_sort_type: ls?.default_comment_sort_type,
+      default_post_sort_type: ls?.default_post_sort_type,
+      default_post_time_range_seconds: ls?.default_post_time_range_seconds,
     };
   }
 
@@ -98,31 +96,40 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
     this.handleSiteApplicationQuestionChange =
       this.handleSiteApplicationQuestionChange.bind(this);
 
-    this.handleIconUpload = this.handleIconUpload.bind(this);
-    this.handleIconRemove = this.handleIconRemove.bind(this);
-
-    this.handleBannerUpload = this.handleBannerUpload.bind(this);
-    this.handleBannerRemove = this.handleBannerRemove.bind(this);
+    this.handleIconChange = this.handleIconChange.bind(this);
+    this.handleBannerChange = this.handleBannerChange.bind(this);
 
     this.handleDefaultPostListingTypeChange =
       this.handleDefaultPostListingTypeChange.bind(this);
 
+    this.handleCommentSortTypeChange =
+      this.handleCommentSortTypeChange.bind(this);
+
+    this.handlePostSortTypeChange = this.handlePostSortTypeChange.bind(this);
+
+    this.handlePostTimeRangeChange = this.handlePostTimeRangeChange.bind(this);
+
+    this.handlePostListingModeChange =
+      this.handlePostListingModeChange.bind(this);
+
     this.handleDiscussionLanguageChange =
       this.handleDiscussionLanguageChange.bind(this);
-
-    this.handleAddInstance = this.handleAddInstance.bind(this);
-    this.handleRemoveInstance = this.handleRemoveInstance.bind(this);
-
-    this.handleInstanceEnterPress = this.handleInstanceEnterPress.bind(this);
-    this.handleInstanceTextChange = this.handleInstanceTextChange.bind(this);
 
     this.handleBlockedUrlsUpdate = this.handleBlockedUrlsUpdate.bind(this);
     this.handleSiteContentWarningChange =
       this.handleSiteContentWarningChange.bind(this);
+
+    const { icon, banner } = this.props.siteRes.site_view.site;
+
+    this.state = {
+      ...this.state,
+      icon,
+      banner,
+    };
   }
 
   render() {
-    const siteSetup = this.props.siteRes.site_view.local_site.site_setup;
+    const siteSetup = this.props.siteRes?.site_view.local_site.site_setup;
     return (
       <form
         className="site-form"
@@ -142,11 +149,11 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
             !this.state.submitted
           }
         />
-        <h2 className="h5">{`${
-          siteSetup
-            ? capitalizeFirstLetter(I18NextService.i18n.t("edit"))
-            : capitalizeFirstLetter(I18NextService.i18n.t("setup"))
-        } ${I18NextService.i18n.t("your_site")}`}</h2>
+        <h2 className="h5">
+          {siteSetup
+            ? capitalizeFirstLetter(I18NextService.i18n.t("edit_your_site"))
+            : capitalizeFirstLetter(I18NextService.i18n.t("setup_your_site"))}
+        </h2>
         <div className="mb-3 row">
           <label className="col-12 col-form-label" htmlFor="create-site-name">
             {I18NextService.i18n.t("name")}
@@ -171,10 +178,12 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
           <div className="col-sm-10">
             <ImageUploadForm
               uploadTitle={I18NextService.i18n.t("upload_icon")}
-              imageSrc={this.state.siteForm.icon}
-              onUpload={this.handleIconUpload}
-              onRemove={this.handleIconRemove}
+              uploadKey="uploadSiteIcon"
+              removeKey="deleteSiteIcon"
+              imageSrc={this.state.icon}
+              onImageChange={this.handleIconChange}
               rounded
+              disabled={!this.props.myUserInfo}
             />
           </div>
         </div>
@@ -185,9 +194,11 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
           <div className="col-sm-10">
             <ImageUploadForm
               uploadTitle={I18NextService.i18n.t("upload_banner")}
-              imageSrc={this.state.siteForm.banner}
-              onUpload={this.handleBannerUpload}
-              onRemove={this.handleBannerRemove}
+              uploadKey="uploadSiteBanner"
+              removeKey="deleteSiteBanner"
+              imageSrc={this.state.banner}
+              onImageChange={this.handleBannerChange}
+              disabled={!this.props.myUserInfo}
             />
           </div>
         </div>
@@ -217,6 +228,7 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
               hideNavigationWarnings
               allLanguages={[]}
               siteLanguages={[]}
+              myUserInfo={this.props.myUserInfo}
             />
           </div>
         </div>
@@ -231,27 +243,55 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
               hideNavigationWarnings
               allLanguages={[]}
               siteLanguages={[]}
+              myUserInfo={this.props.myUserInfo}
             />
           </div>
         </div>
         <div className="mb-3 row">
+          <label
+            className="col-12 col-form-label"
+            htmlFor="default-items-per-page"
+          >
+            {I18NextService.i18n.t("posts_per_page")}
+          </label>
           <div className="col-12">
-            <div className="form-check">
-              <input
-                className="form-check-input"
-                id="create-site-downvotes"
-                type="checkbox"
-                checked={this.state.siteForm.enable_downvotes}
-                onChange={linkEvent(this, this.handleSiteEnableDownvotesChange)}
-              />
-              <label
-                className="form-check-label"
-                htmlFor="create-site-downvotes"
-              >
-                {I18NextService.i18n.t("enable_downvotes")}
-              </label>
-            </div>
+            <input
+              id="items-per-page"
+              type="number"
+              className="form-control"
+              value={this.state.siteForm.default_items_per_page}
+              onInput={linkEvent(this, this.handleDefaultItemsPerPageChange)}
+              min={1}
+              max={50}
+            />
           </div>
+        </div>
+        <div className="mb-3 row">
+          {(
+            [
+              { kind: "post_upvotes", i18nKey: "post_upvote_federation" },
+              { kind: "post_downvotes", i18nKey: "post_downvote_federation" },
+              { kind: "comment_upvotes", i18nKey: "comment_upvote_federation" },
+              {
+                kind: "comment_downvotes",
+                i18nKey: "comment_downvote_federation",
+              },
+            ] as const
+          ).map(vote => (
+            <div className="col-12">
+              <label className="form-check-label me-2" htmlFor={vote.kind}>
+                {I18NextService.i18n.t(vote.i18nKey)}
+              </label>
+              <FederationModeSelect
+                id={vote.kind}
+                current={this.state.siteForm[vote.kind] ?? "all"}
+                onChange={linkEvent(
+                  { i: this, voteKind: vote.kind },
+                  this.handleSiteVoteModeChange,
+                )}
+              />
+            </div>
+          ))}
         </div>
         <div className="mb-3 row">
           <div className="col-12">
@@ -260,19 +300,20 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
                 className="form-check-input"
                 id="create-site-enable-nsfw"
                 type="checkbox"
-                checked={this.state.siteForm.enable_nsfw}
+                checked={this.state.siteForm.disallow_nsfw_content}
                 onChange={linkEvent(this, this.handleSiteEnableNsfwChange)}
               />
               <label
                 className="form-check-label"
                 htmlFor="create-site-enable-nsfw"
               >
-                {I18NextService.i18n.t("enable_nsfw")}
+                {I18NextService.i18n.t("disallow_nsfw_content")}
               </label>
             </div>
           </div>
         </div>
-        {this.state.siteForm.enable_nsfw && (
+
+        {!this.state.siteForm.disallow_nsfw_content && (
           <div className="mb-3 row">
             <div className="alert small alert-info" role="alert">
               <Icon icon="info" classes="icon-inline me-2" />
@@ -288,6 +329,7 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
                 hideNavigationWarnings
                 allLanguages={[]}
                 siteLanguages={[]}
+                myUserInfo={this.props.myUserInfo}
               />
             </div>
           </div>
@@ -306,19 +348,19 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
               onChange={linkEvent(this, this.handleSiteRegistrationModeChange)}
               className="form-select d-inline-block w-auto"
             >
-              <option value={"RequireApplication"}>
+              <option value={"require_application"}>
                 {I18NextService.i18n.t("require_registration_application")}
               </option>
-              <option value={"Open"}>
+              <option value={"open"}>
                 {I18NextService.i18n.t("open_registration")}
               </option>
-              <option value={"Closed"}>
+              <option value={"closed"}>
                 {I18NextService.i18n.t("close_registration")}
               </option>
             </select>
           </div>
         </div>
-        {this.state.siteForm.registration_mode === "RequireApplication" && (
+        {this.state.siteForm.registration_mode === "require_application" && (
           <div className="mb-3 row">
             <label className="col-12 col-form-label">
               {I18NextService.i18n.t("application_questionnaire")}
@@ -330,6 +372,7 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
                 hideNavigationWarnings
                 allLanguages={[]}
                 siteLanguages={[]}
+                myUserInfo={this.props.myUserInfo}
               />
             </div>
           </div>
@@ -371,6 +414,28 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
                 htmlFor="create-site-community-creation-admin-only"
               >
                 {I18NextService.i18n.t("community_creation_admin_only")}
+              </label>
+            </div>
+          </div>
+        </div>
+        <div className="mb-3 row">
+          <div className="col-12">
+            <div className="form-check">
+              <input
+                className="form-check-input"
+                id="disable-email-notifications"
+                type="checkbox"
+                checked={this.state.siteForm.disable_email_notifications}
+                onChange={linkEvent(
+                  this,
+                  this.handleSiteDisableEmailNotifications,
+                )}
+              />
+              <label
+                className="form-check-label"
+                htmlFor="disable-email-notifications"
+              >
+                {I18NextService.i18n.t("disable_email_notifications")}
               </label>
             </div>
           </div>
@@ -452,11 +517,11 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
               onChange={linkEvent(this, this.handleSiteDefaultTheme)}
               className="form-select d-inline-block w-auto"
             >
-              <option value="browser">
-                {I18NextService.i18n.t("browser_default")}
+              <option value="instance">
+                {I18NextService.i18n.t("theme_instance_default")}
               </option>
-              <option value="browser-compact">
-                {I18NextService.i18n.t("browser_default_compact")}
+              <option value="instance-compact">
+                {I18NextService.i18n.t("theme_instance_default_compact")}
               </option>
               {this.props.themeList?.map(theme => (
                 <option key={theme} value={theme}>
@@ -473,14 +538,61 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
             </label>
             <div className="col-sm-9">
               <ListingTypeSelect
-                type_={this.state.siteForm.default_post_listing_type ?? "Local"}
+                type_={this.state.siteForm.default_post_listing_type ?? "local"}
                 showLocal
                 showSubscribed={false}
+                myUserInfo={this.props.myUserInfo}
                 onChange={this.handleDefaultPostListingTypeChange}
               />
             </div>
           </form>
         )}
+        <form className="mb-3 row">
+          <label className="col-sm-3 col-form-label">
+            {I18NextService.i18n.t("listing_mode")}
+          </label>
+          <div className="col-sm-9">
+            <PostListingModeSelect
+              current={this.state.siteForm.default_post_listing_mode ?? "list"}
+              onChange={this.handlePostListingModeChange}
+            />
+          </div>
+        </form>
+        <form className="mb-3 row">
+          <label className="col-sm-3 col-form-label">
+            {I18NextService.i18n.t("post_sort_type")}
+          </label>
+          <div className="col-sm-9">
+            <PostSortSelect
+              current={this.state.siteForm.default_post_sort_type ?? "active"}
+              onChange={this.handlePostSortTypeChange}
+            />
+          </div>
+        </form>
+        <form className="mb-3 row">
+          <label className="col-sm-3 col-form-label">
+            {I18NextService.i18n.t("comment_sort_type")}
+          </label>
+          <div className="col-sm-9">
+            <CommentSortSelect
+              current={this.state.siteForm.default_comment_sort_type ?? "hot"}
+              onChange={this.handleCommentSortTypeChange}
+            />
+          </div>
+        </form>
+        <form className="mb-3 row">
+          <label className="col-sm-3 col-form-label">
+            {I18NextService.i18n.t("post_time_range")}
+          </label>
+          <div className="col-sm-9">
+            <TimeIntervalSelect
+              currentSeconds={
+                this.state.siteForm.default_post_time_range_seconds
+              }
+              onChange={this.handlePostTimeRangeChange}
+            />
+          </div>
+        </form>
         <div className="mb-3 row">
           <div className="col-12">
             <div className="form-check">
@@ -496,25 +608,6 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
                 htmlFor="create-site-private-instance"
               >
                 {I18NextService.i18n.t("private_instance")}
-              </label>
-            </div>
-          </div>
-        </div>
-        <div className="mb-3 row">
-          <div className="col-12">
-            <div className="form-check">
-              <input
-                className="form-check-input"
-                id="create-site-hide-modlog-mod-names"
-                type="checkbox"
-                checked={this.state.siteForm.hide_modlog_mod_names}
-                onChange={linkEvent(this, this.handleSiteHideModlogModNames)}
-              />
-              <label
-                className="form-check-label"
-                htmlFor="create-site-hide-modlog-mod-names"
-              >
-                {I18NextService.i18n.t("hide_modlog_mod_names")}
               </label>
             </div>
           </div>
@@ -539,12 +632,13 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
           </div>
         </div>
         <LanguageSelect
-          allLanguages={this.props.siteRes.all_languages}
-          siteLanguages={this.props.siteRes.discussion_languages}
+          allLanguages={this.props.siteRes?.all_languages}
+          siteLanguages={this.props.siteRes?.discussion_languages}
           selectedLanguageIds={this.state.siteForm.discussion_languages}
-          multiple={true}
+          multiple
           onChange={this.handleDiscussionLanguageChange}
           showAll
+          myUserInfo={this.props.myUserInfo}
         />
         <UrlListTextarea
           urls={this.state.siteForm.blocked_urls ?? []}
@@ -557,16 +651,6 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
           >
             {I18NextService.i18n.t("actor_name_max_length")}
           </label>
-          <div className="col-12">
-            <input
-              type="number"
-              id="create-site-actor-name"
-              className="form-control"
-              min={5}
-              value={this.state.siteForm.actor_name_max_length}
-              onInput={linkEvent(this, this.handleSiteActorNameMaxLength)}
-            />
-          </div>
         </div>
         <div className="mb-3 row">
           <div className="col-12">
@@ -587,33 +671,6 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
             </div>
           </div>
         </div>
-        {this.state.siteForm.federation_enabled && (
-          <>
-            <div className="mb-3 row">
-              {this.federatedInstanceSelect("allowed_instances")}
-              {this.federatedInstanceSelect("blocked_instances")}
-            </div>
-            <div className="mb-3 row">
-              <div className="col-12">
-                <div className="form-check">
-                  <input
-                    className="form-check-input"
-                    id="create-site-federation-debug"
-                    type="checkbox"
-                    checked={this.state.siteForm.federation_debug}
-                    onChange={linkEvent(this, this.handleSiteFederationDebug)}
-                  />
-                  <label
-                    className="form-check-label"
-                    htmlFor="create-site-federation-debug"
-                  >
-                    {I18NextService.i18n.t("federation_debug")}
-                  </label>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
         <div className="mb-3 row">
           <div className="col-12">
             <div className="form-check">
@@ -678,107 +735,6 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
     );
   }
 
-  componentDidUpdate(
-    prevProps: Readonly<{ children?: InfernoNode } & SiteFormProps>,
-  ) {
-    if (
-      !(
-        deepEqual(prevProps.allowedInstances, this.props.allowedInstances) ||
-        deepEqual(prevProps.blockedInstances, this.props.blockedInstances)
-      )
-    ) {
-      this.setState({ siteForm: this.initSiteForm() });
-    }
-  }
-
-  federatedInstanceSelect(key: InstanceKey) {
-    const id = `create_site_${key}`;
-    const value = this.state.instance_select[key];
-    const selectedInstances = this.state.siteForm[key];
-    return (
-      <div className="col-12 col-md-6">
-        <label className="col-form-label" htmlFor={id}>
-          {I18NextService.i18n.t(key)}
-        </label>
-        <div className="d-flex justify-content-between align-items-center">
-          <div className="input-group ms-2">
-            <input
-              type="text"
-              placeholder="instance.tld"
-              id={id}
-              className="form-control"
-              value={value}
-              onInput={linkEvent(key, this.handleInstanceTextChange)}
-              onKeyUp={linkEvent(key, this.handleInstanceEnterPress)}
-            />
-            <button
-              type="button"
-              className="btn bg-success"
-              onClick={linkEvent(key, this.handleAddInstance)}
-              tabIndex={
-                -1 /* Making this untabble because handling enter key in text input makes keyboard support for this button redundant */
-              }
-            >
-              <Icon
-                icon="add"
-                classes="icon-inline text-light m-auto d-block position-static"
-              />
-            </button>
-          </div>
-        </div>
-        {selectedInstances && selectedInstances.length > 0 && (
-          <ul className="mt-3 list-unstyled w-100 d-flex flex-column justify-content-around align-items-center">
-            {selectedInstances.map(instance => (
-              <li
-                key={instance}
-                className="my-1 w-100 w-md-75 d-flex align-items-center justify-content-between"
-              >
-                <label className="d-block m-0 w-100 " htmlFor={instance}>
-                  <strong>{instance}</strong>
-                </label>
-                <button
-                  id={instance}
-                  type="button"
-                  className="btn btn-sm bg-danger"
-                  onClick={linkEvent(
-                    { key, instance },
-                    this.handleRemoveInstance,
-                  )}
-                >
-                  <Icon
-                    icon="x"
-                    classes="icon-inline text-light m-auto d-block position-static"
-                  />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    );
-  }
-
-  handleInstanceTextChange(type: InstanceKey, event: any) {
-    this.setState(s => ({
-      ...s,
-      instance_select: {
-        ...s.instance_select,
-        [type]: event.target.value,
-      },
-    }));
-  }
-
-  handleInstanceEnterPress(
-    key: InstanceKey,
-    event: InfernoKeyboardEvent<HTMLInputElement>,
-  ) {
-    if (event.code.toLowerCase() === "enter") {
-      event.preventDefault();
-
-      this.handleAddInstance(key);
-    }
-  }
-
   handleSaveSiteSubmit(i: SiteForm, event: any) {
     event.preventDefault();
     i.setState({ submitted: true });
@@ -787,19 +743,20 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
 
     let form: EditSite | CreateSite;
 
-    if (i.props.siteRes.site_view.local_site.site_setup) {
+    if (i.props.siteRes?.site_view.local_site.site_setup) {
       form = stateSiteForm;
     } else {
       form = {
         name: stateSiteForm.name ?? "My site",
         sidebar: stateSiteForm.sidebar,
         description: stateSiteForm.description,
-        icon: stateSiteForm.icon,
-        banner: stateSiteForm.banner,
         community_creation_admin_only:
           stateSiteForm.community_creation_admin_only,
-        enable_nsfw: stateSiteForm.enable_nsfw,
-        enable_downvotes: stateSiteForm.enable_downvotes,
+        post_upvotes: stateSiteForm.post_upvotes,
+        post_downvotes: stateSiteForm.post_downvotes,
+        comment_upvotes: stateSiteForm.comment_upvotes,
+        comment_downvotes: stateSiteForm.comment_downvotes,
+        disallow_nsfw_content: stateSiteForm.disallow_nsfw_content,
         application_question: stateSiteForm.application_question,
         registration_mode: stateSiteForm.registration_mode,
         oauth_registration: stateSiteForm.oauth_registration,
@@ -808,32 +765,39 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
         default_theme: stateSiteForm.default_theme,
         default_post_listing_type: stateSiteForm.default_post_listing_type,
         application_email_admins: stateSiteForm.application_email_admins,
-        hide_modlog_mod_names: stateSiteForm.hide_modlog_mod_names,
         legal_information: stateSiteForm.legal_information,
         slur_filter_regex: stateSiteForm.slur_filter_regex,
-        actor_name_max_length: stateSiteForm.actor_name_max_length,
-        rate_limit_message: stateSiteForm.rate_limit_message,
-        rate_limit_message_per_second:
-          stateSiteForm.rate_limit_message_per_second,
-        rate_limit_comment: stateSiteForm.rate_limit_comment,
-        rate_limit_comment_per_second:
-          stateSiteForm.rate_limit_comment_per_second,
-        rate_limit_image: stateSiteForm.rate_limit_image,
-        rate_limit_image_per_second: stateSiteForm.rate_limit_image_per_second,
-        rate_limit_post: stateSiteForm.rate_limit_post,
-        rate_limit_post_per_second: stateSiteForm.rate_limit_post_per_second,
-        rate_limit_register: stateSiteForm.rate_limit_register,
-        rate_limit_register_per_second:
-          stateSiteForm.rate_limit_register_per_second,
-        rate_limit_search: stateSiteForm.rate_limit_search,
-        rate_limit_search_per_second:
-          stateSiteForm.rate_limit_search_per_second,
+        rate_limit_message_max_requests:
+          stateSiteForm.rate_limit_message_max_requests,
+        rate_limit_message_interval_seconds:
+          stateSiteForm.rate_limit_message_interval_seconds,
+        rate_limit_post_max_requests:
+          stateSiteForm.rate_limit_post_max_requests,
+        rate_limit_post_interval_seconds:
+          stateSiteForm.rate_limit_post_interval_seconds,
+        rate_limit_register_max_requests:
+          stateSiteForm.rate_limit_register_max_requests,
+        rate_limit_register_interval_seconds:
+          stateSiteForm.rate_limit_register_interval_seconds,
+        rate_limit_image_max_requests:
+          stateSiteForm.rate_limit_image_max_requests,
+        rate_limit_image_interval_seconds:
+          stateSiteForm.rate_limit_image_interval_seconds,
+        rate_limit_comment_max_requests:
+          stateSiteForm.rate_limit_comment_max_requests,
+        rate_limit_comment_interval_seconds:
+          stateSiteForm.rate_limit_comment_interval_seconds,
+        rate_limit_search_max_requests:
+          stateSiteForm.rate_limit_search_max_requests,
+        rate_limit_search_interval_seconds:
+          stateSiteForm.rate_limit_search_interval_seconds,
+        rate_limit_import_user_settings_max_requests:
+          stateSiteForm.rate_limit_import_user_settings_max_requests,
+        rate_limit_import_user_settings_interval_seconds:
+          stateSiteForm.rate_limit_import_user_settings_interval_seconds,
         federation_enabled: stateSiteForm.federation_enabled,
-        federation_debug: stateSiteForm.federation_debug,
         captcha_enabled: stateSiteForm.captcha_enabled,
         captcha_difficulty: stateSiteForm.captcha_difficulty,
-        allowed_instances: stateSiteForm.allowed_instances,
-        blocked_instances: stateSiteForm.blocked_instances,
         discussion_languages: stateSiteForm.discussion_languages,
       };
     }
@@ -841,53 +805,8 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
     i.props.onSaveSite(form);
   }
 
-  handleAddInstance(key: InstanceKey) {
-    const instance = this.state.instance_select[key].trim();
-
-    if (!validInstanceTLD(instance)) {
-      return;
-    }
-
-    if (!this.state.siteForm[key]?.includes(instance)) {
-      this.setState(s => ({
-        ...s,
-        siteForm: {
-          ...s.siteForm,
-          [key]: [...(s.siteForm[key] ?? []), instance],
-        },
-        instance_select: {
-          ...s.instance_select,
-          [key]: "",
-        },
-      }));
-
-      const oppositeKey: InstanceKey =
-        key === "allowed_instances" ? "blocked_instances" : "allowed_instances";
-      if (this.state.siteForm[oppositeKey]?.includes(instance)) {
-        this.handleRemoveInstance({ key: oppositeKey, instance });
-      }
-    }
-  }
-
-  handleRemoveInstance({
-    key,
-    instance,
-  }: {
-    key: InstanceKey;
-    instance: string;
-  }) {
-    this.setState(s => ({
-      ...s,
-      siteForm: {
-        ...s.siteForm,
-        [key]: s.siteForm[key]?.filter(i => i !== instance),
-      },
-    }));
-  }
-
   handleSiteNameChange(i: SiteForm, event: any) {
-    i.state.siteForm.name = event.target.value;
-    i.setState(i.state);
+    i.setState(s => ((s.siteForm.name = event.target.value), s));
   }
 
   handleSiteSidebarChange(val: string) {
@@ -898,112 +817,118 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
     this.setState(s => ((s.siteForm.legal_information = val), s));
   }
 
+  handleDefaultItemsPerPageChange(i: SiteForm, event: any) {
+    i.setState(
+      s => (
+        (s.siteForm.default_items_per_page = Number(event.target.value)),
+        s
+      ),
+    );
+  }
+
   handleSiteApplicationQuestionChange(val: string) {
     this.setState(s => ((s.siteForm.application_question = val), s));
   }
 
   handleSiteDescChange(i: SiteForm, event: any) {
-    i.state.siteForm.description = event.target.value;
-    i.setState(i.state);
+    i.setState(s => ((s.siteForm.description = event.target.value), s));
   }
 
   handleSiteEnableNsfwChange(i: SiteForm, event: any) {
-    i.state.siteForm.enable_nsfw = event.target.checked;
-    if (!event.target.checked) {
-      i.state.siteForm.content_warning = "";
+    const newState = i.state;
+    newState.siteForm.disallow_nsfw_content = event.target.checked;
+    if (event.target.checked) {
+      newState.siteForm.content_warning = "";
     }
-    i.setState(i.state);
+    i.setState(newState);
   }
 
   handleSiteRegistrationModeChange(i: SiteForm, event: any) {
-    i.state.siteForm.registration_mode = event.target.value;
-    i.setState(i.state);
+    i.setState(s => ((s.siteForm.registration_mode = event.target.value), s));
   }
 
   handleSiteOauthRegistration(i: SiteForm, event: any) {
-    i.state.siteForm.oauth_registration = event.target.checked;
-    i.setState(i.state);
+    i.setState(
+      s => ((s.siteForm.oauth_registration = event.target.checked), s),
+    );
   }
 
   handleSiteCommunityCreationAdminOnly(i: SiteForm, event: any) {
-    i.state.siteForm.community_creation_admin_only = event.target.checked;
-    i.setState(i.state);
+    i.setState(
+      s => (
+        (s.siteForm.community_creation_admin_only = event.target.checked),
+        s
+      ),
+    );
   }
 
-  handleSiteEnableDownvotesChange(i: SiteForm, event: any) {
-    i.state.siteForm.enable_downvotes = event.target.checked;
-    i.setState(i.state);
+  handleSiteVoteModeChange(
+    {
+      i,
+      voteKind,
+    }: {
+      i: SiteForm;
+      voteKind: `${"post" | "comment"}_${"upvotes" | "downvotes"}`;
+    },
+    event: FormEvent<HTMLSelectElement>,
+  ) {
+    const newState = i.state;
+    newState.siteForm[voteKind] = event.target.value as FederationMode;
+    i.setState(newState);
   }
 
   handleSiteRequireEmailVerification(i: SiteForm, event: any) {
-    i.state.siteForm.require_email_verification = event.target.checked;
-    i.setState(i.state);
+    i.setState(
+      s => ((s.siteForm.require_email_verification = event.target.checked), s),
+    );
   }
 
   handleSiteApplicationEmailAdmins(i: SiteForm, event: any) {
-    i.state.siteForm.application_email_admins = event.target.checked;
-    i.setState(i.state);
+    i.setState(
+      s => ((s.siteForm.application_email_admins = event.target.checked), s),
+    );
+  }
+
+  handleSiteDisableEmailNotifications(i: SiteForm, event: any) {
+    i.setState(
+      s => ((s.siteForm.disable_email_notifications = event.target.checked), s),
+    );
   }
 
   handleSiteReportsEmailAdmins(i: SiteForm, event: any) {
-    i.state.siteForm.reports_email_admins = event.target.checked;
-    i.setState(i.state);
+    i.setState(
+      s => ((s.siteForm.reports_email_admins = event.target.checked), s),
+    );
   }
 
   handleSitePrivateInstance(i: SiteForm, event: any) {
-    i.state.siteForm.private_instance = event.target.checked;
-    i.setState(i.state);
-  }
-
-  handleSiteHideModlogModNames(i: SiteForm, event: any) {
-    i.state.siteForm.hide_modlog_mod_names = event.target.checked;
-    i.setState(i.state);
+    i.setState(s => ((s.siteForm.private_instance = event.target.checked), s));
   }
 
   handleSiteDefaultTheme(i: SiteForm, event: any) {
-    i.state.siteForm.default_theme = event.target.value;
-    i.setState(i.state);
+    i.setState(s => ((s.siteForm.default_theme = event.target.value), s));
   }
 
-  handleIconUpload(url: string) {
-    this.setState(s => ((s.siteForm.icon = url), s));
+  handleIconChange(url?: string) {
+    this.setState({ icon: url });
   }
 
-  handleIconRemove() {
-    this.setState(s => ((s.siteForm.icon = ""), s));
-  }
-
-  handleBannerUpload(url: string) {
-    this.setState(s => ((s.siteForm.banner = url), s));
-  }
-
-  handleBannerRemove() {
-    this.setState(s => ((s.siteForm.banner = ""), s));
+  handleBannerChange(url?: string) {
+    this.setState({ banner: url });
   }
 
   handleSiteSlurFilterRegex(i: SiteForm, event: any) {
     i.setState(s => ((s.siteForm.slur_filter_regex = event.target.value), s));
   }
 
-  handleSiteActorNameMaxLength(i: SiteForm, event: any) {
+  handleSiteFederationEnabled(i: SiteForm, event: any) {
     i.setState(
-      s => ((s.siteForm.actor_name_max_length = Number(event.target.value)), s),
+      s => ((s.siteForm.federation_enabled = event.target.checked), s),
     );
   }
 
-  handleSiteFederationEnabled(i: SiteForm, event: any) {
-    i.state.siteForm.federation_enabled = event.target.checked;
-    i.setState(i.state);
-  }
-
-  handleSiteFederationDebug(i: SiteForm, event: any) {
-    i.state.siteForm.federation_debug = event.target.checked;
-    i.setState(i.state);
-  }
-
   handleSiteCaptchaEnabled(i: SiteForm, event: any) {
-    i.state.siteForm.captcha_enabled = event.target.checked;
-    i.setState(i.state);
+    i.setState(s => ((s.siteForm.captcha_enabled = event.target.checked), s));
   }
 
   handleSiteCaptchaDifficulty(i: SiteForm, event: any) {
@@ -1018,21 +943,27 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
     this.setState(s => ((s.siteForm.default_post_listing_type = val), s));
   }
 
+  handleCommentSortTypeChange(val: CommentSortType) {
+    this.setState(s => ((s.siteForm.default_comment_sort_type = val), s));
+  }
+
+  handlePostSortTypeChange(val: PostSortType) {
+    this.setState(s => ((s.siteForm.default_post_sort_type = val), s));
+  }
+
+  handlePostListingModeChange(val: PostListingMode) {
+    this.setState(s => ((s.siteForm.default_post_listing_mode = val), s));
+  }
+
+  handlePostTimeRangeChange(val: number) {
+    this.setState(s => ((s.siteForm.default_post_time_range_seconds = val), s));
+  }
+
   handleBlockedUrlsUpdate(newBlockedUrls: string[]) {
-    this.setState(prev => ({
-      ...prev,
-      siteForm: {
-        ...prev.siteForm,
-        blocked_urls: newBlockedUrls,
-      },
-    }));
+    this.setState(s => ((s.siteForm.blocked_urls = newBlockedUrls), s));
   }
 
   handleSiteContentWarningChange(val: string) {
-    this.state.siteForm.content_warning = val;
-    if (val) {
-      this.state.siteForm.enable_nsfw = true;
-    }
-    this.setState(this.state);
+    this.setState(s => ((s.siteForm.content_warning = val), s));
   }
 }

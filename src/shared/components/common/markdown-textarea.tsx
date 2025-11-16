@@ -6,23 +6,23 @@ import { NoOptionI18nKeys } from "i18next";
 import { Component, linkEvent } from "inferno";
 import { createElement } from "inferno-create-element";
 import { Prompt } from "inferno-router";
-import { Language } from "lemmy-js-client";
+import { Language, LanguageId, MyUserInfo } from "lemmy-js-client";
 import {
   concurrentImageUpload,
   markdownFieldCharacterLimit,
   markdownHelpUrl,
   maxUploadImages,
   relTags,
-} from "../../config";
-import { customEmojisLookup, mdToHtml, setupTribute } from "../../markdown";
-import { HttpService, I18NextService, UserService } from "../../services";
+} from "@utils/config";
+import { customEmojisLookup, mdToHtml, setupTribute } from "@utils/markdown";
+import { HttpService, I18NextService } from "@services/index";
 import { tippyMixin } from "../mixins/tippy-mixin";
-import { pictrsDeleteToast, toast } from "../../toast";
+import { userNotLoggedInOrBanned, pictrsDeleteToast, toast } from "@utils/app";
 import { EmojiPicker } from "./emoji-picker";
 import { Icon, Spinner } from "./icon";
 import { LanguageSelect } from "./language-select";
 import ProgressBar from "./progress-bar";
-import validUrl from "@utils/helpers/valid-url";
+import { validURL } from "@utils/helpers";
 interface MarkdownTextAreaProps {
   /**
    * Initial content inside the textarea
@@ -50,10 +50,11 @@ interface MarkdownTextAreaProps {
   onContentChange?(val: string): void;
   onContentBlur?(val: string): void;
   onReplyCancel?(): void;
-  onSubmit?(content: string, languageId?: number): Promise<boolean>;
-  allLanguages: Language[]; // TODO should probably be nullable
-  siteLanguages: number[]; // TODO same
+  onSubmit?(content: string, languageId?: number): void;
+  allLanguages?: Language[];
+  siteLanguages?: LanguageId[];
   renderAsDiv?: boolean;
+  myUserInfo: MyUserInfo | undefined;
 }
 
 interface ImageUploadStatus {
@@ -91,6 +92,7 @@ export class MarkdownTextArea extends Component<
 
     this.handleLanguageChange = this.handleLanguageChange.bind(this);
     this.handleEmoji = this.handleEmoji.bind(this);
+    this.handleInsertLink = this.handleInsertLink.bind(this);
   }
 
   async componentDidMount() {
@@ -150,7 +152,7 @@ export class MarkdownTextArea extends Component<
                   <label
                     htmlFor={`file-upload-${this.id}`}
                     className={classNames("mb-0", {
-                      pointer: UserService.Instance.myUserInfo,
+                      pointer: this.props.myUserInfo,
                     })}
                     data-tippy-content={I18NextService.i18n.t("upload_image")}
                   >
@@ -177,7 +179,7 @@ export class MarkdownTextArea extends Component<
                     name="file"
                     className="d-none"
                     multiple
-                    disabled={!UserService.Instance.myUserInfo}
+                    disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
                     onChange={linkEvent(this, this.handleImageUpload)}
                   />
                   {this.getFormatButton("header", this.handleInsertHeader)}
@@ -202,6 +204,7 @@ export class MarkdownTextArea extends Component<
                     className="btn btn-sm btn-link rounded-0 text-muted fw-bold"
                     title={I18NextService.i18n.t("formatting_help")}
                     rel={relTags}
+                    target="_blank"
                   >
                     <Icon icon="help-circle" classes="icon-inline" />
                   </a>
@@ -232,7 +235,7 @@ export class MarkdownTextArea extends Component<
                 />
                 {this.state.previewMode && this.state.content && (
                   <div
-                    className="card border-secondary card-body md-div"
+                    className="card card-body md-div"
                     dangerouslySetInnerHTML={mdToHtml(this.state.content, () =>
                       this.forceUpdate(),
                     )}
@@ -307,6 +310,7 @@ export class MarkdownTextArea extends Component<
                 siteLanguages={this.props.siteLanguages}
                 onChange={this.handleLanguageChange}
                 disabled={this.isDisabled}
+                myUserInfo={this.props.myUserInfo}
               />
             )}
           </div>
@@ -355,12 +359,7 @@ export class MarkdownTextArea extends Component<
         value = `![${emoji.alt_text}](${emoji.image_url} "emoji ${emoji.shortcode}")`;
       }
     }
-    this.setState({
-      content: `${this.state.content ?? ""} ${value} `,
-    });
-    this.contentChange();
-    const textarea: any = document.getElementById(this.id);
-    autosize.update(textarea);
+    this.insertAtCursor(value);
   }
 
   handlePaste(i: MarkdownTextArea, event: ClipboardEvent) {
@@ -375,7 +374,7 @@ export class MarkdownTextArea extends Component<
 
     // check clipboard url
     const url = event.clipboardData.getData("text");
-    if (validUrl(url)) {
+    if (validURL(url)) {
       i.handleUrlPaste(url, i, event);
     }
   }
@@ -463,39 +462,10 @@ export class MarkdownTextArea extends Component<
   async uploadSingleImage(i: MarkdownTextArea, image: File) {
     const res = await HttpService.client.uploadImage({ image });
     if (res.state === "success") {
-      if (res.data.msg === "ok") {
-        const imageMarkdown = `![](${res.data.url})`;
-        const textarea: HTMLTextAreaElement = document.getElementById(
-          i.id,
-        ) as HTMLTextAreaElement;
-        const cursorPosition = textarea.selectionStart;
+      const imageMarkdown = `![](${res.data.image_url})`;
+      this.insertAtCursor(imageMarkdown);
 
-        i.setState(({ content }) => {
-          const currentContent = content || "";
-          return {
-            content:
-              currentContent.slice(0, cursorPosition) +
-              imageMarkdown +
-              currentContent.slice(cursorPosition),
-          };
-        });
-
-        i.contentChange();
-        // Update cursor position to after the inserted image link
-        setTimeout(() => {
-          textarea.selectionStart = cursorPosition + imageMarkdown.length;
-          textarea.selectionEnd = cursorPosition + imageMarkdown.length;
-          autosize.update(textarea);
-        }, 10);
-
-        pictrsDeleteToast(image.name, res.data.delete_url as string);
-      } else if (res.data.msg === "too_large") {
-        toast(I18NextService.i18n.t("upload_too_large"), "danger");
-        i.setState({ imageUploadStatus: undefined });
-        throw JSON.stringify(res.data);
-      } else {
-        throw JSON.stringify(res.data);
-      }
+      pictrsDeleteToast(res.data.filename);
     } else if (res.state === "failed") {
       i.setState({ imageUploadStatus: undefined });
       console.error(res.err.name);
@@ -503,6 +473,34 @@ export class MarkdownTextArea extends Component<
 
       throw res.err;
     }
+  }
+
+  // Insert the given string at the current cursor position. By default the cursor is
+  // placed right after the newly inserted text, but this can be changed with
+  // `cursorOffset`.
+  insertAtCursor(text: string, cursorOffset: number = 0) {
+    const textarea: HTMLTextAreaElement = document.getElementById(
+      this.id,
+    ) as HTMLTextAreaElement;
+    const cursorPosition = textarea.selectionStart;
+
+    this.setState(({ content }) => {
+      const currentContent = content ?? "";
+      return {
+        content:
+          currentContent.slice(0, cursorPosition) +
+          text +
+          currentContent.slice(cursorPosition),
+      };
+    });
+    this.contentChange();
+    // Update cursor position to after the inserted image link
+    setTimeout(() => {
+      textarea.selectionStart = cursorPosition + text.length + cursorOffset;
+      textarea.selectionEnd = cursorPosition + text.length + cursorOffset;
+      textarea.focus();
+      autosize.update(textarea);
+    }, 10);
   }
 
   contentChange() {
@@ -530,7 +528,7 @@ export class MarkdownTextArea extends Component<
           break;
         }
         case "Enter": {
-          if (!this.isDisabled) {
+          if (!i.isDisabled) {
             i.handleSubmit(i, event);
           }
 
@@ -577,15 +575,12 @@ export class MarkdownTextArea extends Component<
     this.setState({ languageId: val[0] });
   }
 
-  async handleSubmit(i: MarkdownTextArea, event: any) {
+  handleSubmit(i: MarkdownTextArea, event: any) {
     event.preventDefault();
     if (i.state.content) {
       i.setState({ loading: true, submitted: true });
-      const success = await i.props.onSubmit?.(
-        i.state.content,
-        i.state.languageId,
-      );
-      i.setState({ loading: false, submitted: success ?? true });
+      i.props.onSubmit?.(i.state.content, i.state.languageId);
+      i.setState({ loading: false });
     }
   }
 
@@ -617,9 +612,7 @@ export class MarkdownTextArea extends Component<
       textarea.focus();
       setTimeout(() => (textarea.selectionEnd = end + 3), 10);
     } else {
-      i.setState({ content: `${content} []()` });
-      textarea.focus();
-      setTimeout(() => (textarea.selectionEnd -= 1), 10);
+      this.insertAtCursor("[]()", -3);
     }
     i.contentChange();
   }

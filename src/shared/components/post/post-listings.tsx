@@ -6,6 +6,7 @@ import {
   AddModToCommunity,
   BanFromCommunity,
   BanPerson,
+  BlockCommunity,
   BlockPerson,
   CreatePostLike,
   CreatePostReport,
@@ -14,10 +15,14 @@ import {
   FeaturePost,
   HidePost,
   Language,
-  LocalUserVoteDisplayMode,
+  LanguageId,
+  LocalSite,
   LockPost,
   MarkPostAsRead,
-  PostResponse,
+  MyUserInfo,
+  NotePerson,
+  PersonView,
+  PostListingMode,
   PostView,
   PurgePerson,
   PurgePost,
@@ -27,36 +32,43 @@ import {
 } from "lemmy-js-client";
 import { I18NextService } from "../../services";
 import { PostListing } from "./post-listing";
-import { RequestState } from "../../services/HttpService";
+import { ShowCrossPostsType } from "@utils/types";
 
 interface PostListingsProps {
   posts: PostView[];
   allLanguages: Language[];
-  siteLanguages: number[];
-  showCommunity?: boolean;
-  removeDuplicates?: boolean;
-  enableDownvotes?: boolean;
-  voteDisplayMode: LocalUserVoteDisplayMode;
-  enableNsfw?: boolean;
-  viewOnly?: boolean;
-  onPostEdit(form: EditPost): Promise<RequestState<PostResponse>>;
-  onPostVote(form: CreatePostLike): Promise<RequestState<PostResponse>>;
-  onPostReport(form: CreatePostReport): Promise<void>;
-  onBlockPerson(form: BlockPerson): Promise<void>;
-  onLockPost(form: LockPost): Promise<void>;
-  onDeletePost(form: DeletePost): Promise<void>;
-  onRemovePost(form: RemovePost): Promise<void>;
-  onSavePost(form: SavePost): Promise<void>;
-  onFeaturePost(form: FeaturePost): Promise<void>;
-  onPurgePerson(form: PurgePerson): Promise<void>;
-  onPurgePost(form: PurgePost): Promise<void>;
-  onBanPersonFromCommunity(form: BanFromCommunity): Promise<void>;
-  onBanPerson(form: BanPerson): Promise<void>;
-  onAddModToCommunity(form: AddModToCommunity): Promise<void>;
-  onAddAdmin(form: AddAdmin): Promise<void>;
-  onTransferCommunity(form: TransferCommunity): Promise<void>;
-  onMarkPostAsRead(form: MarkPostAsRead): Promise<void>;
-  onHidePost(form: HidePost): Promise<void>;
+  siteLanguages: LanguageId[];
+  showCommunity: boolean;
+  showCrossPosts: ShowCrossPostsType;
+  markable: boolean;
+  enableNsfw: boolean;
+  showAdultConsentModal: boolean;
+  viewOnly: boolean;
+  myUserInfo: MyUserInfo | undefined;
+  localSite: LocalSite;
+  admins: PersonView[];
+  postListingMode: PostListingMode;
+  onPostEdit(form: EditPost): void;
+  onPostVote(form: CreatePostLike): void;
+  onPostReport(form: CreatePostReport): void;
+  onBlockPerson(form: BlockPerson): void;
+  onBlockCommunity(form: BlockCommunity): void;
+  onLockPost(form: LockPost): void;
+  onDeletePost(form: DeletePost): void;
+  onRemovePost(form: RemovePost): void;
+  onSavePost(form: SavePost): void;
+  onFeaturePost(form: FeaturePost): void;
+  onPurgePerson(form: PurgePerson): void;
+  onPurgePost(form: PurgePost): void;
+  onBanPersonFromCommunity(form: BanFromCommunity): void;
+  onBanPerson(form: BanPerson): void;
+  onAddModToCommunity(form: AddModToCommunity): void;
+  onAddAdmin(form: AddAdmin): void;
+  onTransferCommunity(form: TransferCommunity): void;
+  onMarkPostAsRead(form: MarkPostAsRead): void;
+  onHidePost(form: HidePost): void;
+  onPersonNote(form: NotePerson): void;
+  onScrollIntoCommentsClick(): void;
 }
 
 export class PostListings extends Component<PostListingsProps, any> {
@@ -67,7 +79,7 @@ export class PostListings extends Component<PostListingsProps, any> {
   }
 
   get posts() {
-    return this.props.removeDuplicates
+    return this.props.showCrossPosts !== "show_separately"
       ? this.removeDuplicates()
       : this.props.posts;
   }
@@ -76,40 +88,56 @@ export class PostListings extends Component<PostListingsProps, any> {
     return (
       <div className="post-listings">
         {this.posts.length > 0 ? (
-          this.posts.map((post_view, idx) => (
-            <>
-              <PostListing
-                post_view={post_view}
-                crossPosts={this.duplicatesMap.get(post_view.post.id)}
-                showCommunity={this.props.showCommunity}
-                enableDownvotes={this.props.enableDownvotes}
-                voteDisplayMode={this.props.voteDisplayMode}
-                enableNsfw={this.props.enableNsfw}
-                viewOnly={this.props.viewOnly}
-                allLanguages={this.props.allLanguages}
-                siteLanguages={this.props.siteLanguages}
-                onPostEdit={this.props.onPostEdit}
-                onPostVote={this.props.onPostVote}
-                onPostReport={this.props.onPostReport}
-                onBlockPerson={this.props.onBlockPerson}
-                onLockPost={this.props.onLockPost}
-                onDeletePost={this.props.onDeletePost}
-                onRemovePost={this.props.onRemovePost}
-                onSavePost={this.props.onSavePost}
-                onFeaturePost={this.props.onFeaturePost}
-                onPurgePerson={this.props.onPurgePerson}
-                onPurgePost={this.props.onPurgePost}
-                onBanPersonFromCommunity={this.props.onBanPersonFromCommunity}
-                onBanPerson={this.props.onBanPerson}
-                onAddModToCommunity={this.props.onAddModToCommunity}
-                onAddAdmin={this.props.onAddAdmin}
-                onTransferCommunity={this.props.onTransferCommunity}
-                onMarkPostAsRead={this.props.onMarkPostAsRead}
-                onHidePost={this.props.onHidePost}
-              />
-              {idx + 1 !== this.posts.length && <hr className="my-3" />}
-            </>
-          ))
+          <div className="row post-listings-grid">
+            {this.posts.map((postView, idx) => (
+              <div className={postListingModeCols(this.props.postListingMode)}>
+                <PostListing
+                  postView={postView}
+                  crossPosts={this.duplicatesMap.get(postView.post.id) ?? []}
+                  showCrossPosts={this.props.showCrossPosts}
+                  showCommunity={this.props.showCommunity}
+                  enableNsfw={this.props.enableNsfw}
+                  showAdultConsentModal={this.props.showAdultConsentModal}
+                  viewOnly={this.props.viewOnly}
+                  allLanguages={this.props.allLanguages}
+                  siteLanguages={this.props.siteLanguages}
+                  myUserInfo={this.props.myUserInfo}
+                  localSite={this.props.localSite}
+                  admins={this.props.admins}
+                  showBody={"preview"}
+                  hideImage={false}
+                  disableAutoMarkAsRead={false}
+                  editLoading={false}
+                  onPostEdit={this.props.onPostEdit}
+                  onPostVote={this.props.onPostVote}
+                  onPostReport={this.props.onPostReport}
+                  onBlockPerson={this.props.onBlockPerson}
+                  onBlockCommunity={this.props.onBlockCommunity}
+                  onLockPost={this.props.onLockPost}
+                  onDeletePost={this.props.onDeletePost}
+                  onRemovePost={this.props.onRemovePost}
+                  onSavePost={this.props.onSavePost}
+                  onFeaturePost={this.props.onFeaturePost}
+                  onPurgePerson={this.props.onPurgePerson}
+                  onPurgePost={this.props.onPurgePost}
+                  onBanPersonFromCommunity={this.props.onBanPersonFromCommunity}
+                  onBanPerson={this.props.onBanPerson}
+                  onAddModToCommunity={this.props.onAddModToCommunity}
+                  onAddAdmin={this.props.onAddAdmin}
+                  onTransferCommunity={this.props.onTransferCommunity}
+                  onHidePost={this.props.onHidePost}
+                  markable={this.props.markable}
+                  onMarkPostAsRead={this.props.onMarkPostAsRead}
+                  onPersonNote={this.props.onPersonNote}
+                  postListingMode={this.props.postListingMode}
+                  onScrollIntoCommentsClick={
+                    this.props.onScrollIntoCommentsClick
+                  }
+                />
+                {idx + 1 !== this.posts.length && <hr className="my-3" />}
+              </div>
+            ))}
+          </div>
         ) : (
           <>
             <div>{I18NextService.i18n.t("no_posts")}</div>
@@ -155,7 +183,9 @@ export class PostListings extends Component<PostListingsProps, any> {
       if (e[1].length === 1) {
         urlMap.delete(e[0]);
       } else {
-        e[1].sort((a, b) => a.post.published.localeCompare(b.post.published));
+        e[1].sort((a, b) =>
+          a.post.published_at.localeCompare(b.post.published_at),
+        );
       }
     }
 
@@ -178,5 +208,15 @@ export class PostListings extends Component<PostListingsProps, any> {
     }
 
     return posts;
+  }
+}
+
+function postListingModeCols(mode: PostListingMode): string {
+  switch (mode) {
+    case "list":
+      return "col-12";
+    case "card":
+    case "small_card":
+      return "col-12 col-md-6";
   }
 }

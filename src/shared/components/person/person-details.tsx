@@ -1,5 +1,4 @@
-import { commentsToFlatNodes } from "@utils/app";
-import { Component } from "inferno";
+import { Component, InfernoNode } from "inferno";
 import {
   AddAdmin,
   AddModToCommunity,
@@ -7,7 +6,6 @@ import {
   BanPerson,
   BlockPerson,
   CommentResponse,
-  CommentView,
   CreateComment,
   CreateCommentLike,
   CreateCommentReport,
@@ -20,16 +18,11 @@ import {
   EditPost,
   FeaturePost,
   GetComments,
-  GetPersonDetailsResponse,
   Language,
-  LocalUserVoteDisplayMode,
   LockPost,
-  MarkCommentReplyAsRead,
-  MarkPersonMentionAsRead,
   MarkPostAsRead,
   PersonView,
   PostResponse,
-  PostView,
   PurgeComment,
   PurgePerson,
   PurgePost,
@@ -39,37 +32,35 @@ import {
   SavePost,
   PostSortType,
   TransferCommunity,
-  GetCommentsResponse,
-  GetPostsResponse,
+  MyUserInfo,
+  PersonContentCombinedView,
+  LocalSite,
+  NotePerson,
+  LockComment,
+  BlockCommunity,
 } from "lemmy-js-client";
-import { CommentViewType, PersonDetailsView } from "../../interfaces";
 import { CommentNodes } from "../comment/comment-nodes";
-import { Paginator } from "../common/paginator";
 import { PostListing } from "../post/post-listing";
 import { RequestState } from "../../services/HttpService";
+import { commentToFlatNode } from "@utils/app";
 
 interface PersonDetailsProps {
-  personRes: GetPersonDetailsResponse;
-  likedCommentsRes?: GetCommentsResponse;
-  likedPostsRes?: GetPostsResponse;
+  content: PersonContentCombinedView[];
   admins: PersonView[];
   allLanguages: Language[];
   siteLanguages: number[];
-  page: number;
   limit: number;
   sort: PostSortType;
-  enableDownvotes: boolean;
-  voteDisplayMode: LocalUserVoteDisplayMode;
   enableNsfw: boolean;
-  view: PersonDetailsView;
-  onPageChange(page: number): number | any;
+  showAdultConsentModal: boolean;
+  myUserInfo: MyUserInfo | undefined;
+  localSite: LocalSite;
   onSaveComment(form: SaveComment): Promise<void>;
-  onCommentReplyRead(form: MarkCommentReplyAsRead): void;
-  onPersonMentionRead(form: MarkPersonMentionAsRead): void;
   onCreateComment(form: CreateComment): Promise<RequestState<CommentResponse>>;
   onEditComment(form: EditComment): Promise<RequestState<CommentResponse>>;
   onCommentVote(form: CreateCommentLike): Promise<void>;
   onBlockPerson(form: BlockPerson): Promise<void>;
+  onBlockCommunity(form: BlockCommunity): Promise<void>;
   onDeleteComment(form: DeleteComment): Promise<void>;
   onRemoveComment(form: RemoveComment): Promise<void>;
   onDistinguishComment(form: DistinguishComment): Promise<void>;
@@ -91,95 +82,38 @@ interface PersonDetailsProps {
   onSavePost(form: SavePost): Promise<void>;
   onFeaturePost(form: FeaturePost): Promise<void>;
   onPurgePost(form: PurgePost): Promise<void>;
-  onMarkPostAsRead(form: MarkPostAsRead): void;
+  onMarkPostAsRead(form: MarkPostAsRead): Promise<void>;
+  onPersonNote(form: NotePerson): Promise<void>;
+  onLockComment(form: LockComment): Promise<void>;
 }
-
-enum ItemEnum {
-  Comment,
-  Post,
-}
-type ItemType = {
-  id: number;
-  type_: ItemEnum;
-  view: CommentView | PostView;
-  published: string;
-  score: number;
-};
 
 export class PersonDetails extends Component<PersonDetailsProps, any> {
   constructor(props: any, context: any) {
     super(props, context);
-    this.handlePageChange = this.handlePageChange.bind(this);
   }
 
-  render() {
-    return (
-      <div className="person-details">
-        {this.viewSelector(this.props.view)}
-
-        <Paginator
-          page={this.props.page}
-          onChange={this.handlePageChange}
-          nextDisabled={
-            (this.props.view === PersonDetailsView.Comments &&
-              this.props.limit > this.props.personRes.comments.length) ||
-            (this.props.view === PersonDetailsView.Posts &&
-              this.props.limit > this.props.personRes.posts.length) ||
-            ((this.props.view === PersonDetailsView.Overview ||
-              this.props.view === PersonDetailsView.Saved) &&
-              this.props.limit > this.props.personRes.posts.length &&
-              this.props.limit > this.props.personRes.comments.length) ||
-            (this.props.view === PersonDetailsView.Upvoted &&
-              this.props.likedCommentsRes !== undefined &&
-              this.props.limit > this.props.likedCommentsRes.comments.length &&
-              this.props.likedPostsRes !== undefined &&
-              this.props.limit > this.props.likedPostsRes.posts.length)
-          }
-        />
-      </div>
-    );
-  }
-
-  viewSelector(view: PersonDetailsView) {
-    if (
-      view === PersonDetailsView.Overview ||
-      view === PersonDetailsView.Saved
-    ) {
-      return this.overview();
-    } else if (view === PersonDetailsView.Comments) {
-      return this.comments();
-    } else if (view === PersonDetailsView.Posts) {
-      return this.posts();
-    } else if (view === PersonDetailsView.Upvoted) {
-      return this.upvoted();
-    } else {
-      return null;
-    }
-  }
-
-  renderItemType(i: ItemType) {
+  renderItemType(i: PersonContentCombinedView): InfernoNode {
     switch (i.type_) {
-      case ItemEnum.Comment: {
-        const c = i.view as CommentView;
+      case "comment": {
         return (
           <CommentNodes
-            key={i.id}
-            nodes={[{ comment_view: c, children: [], depth: 0 }]}
-            viewType={CommentViewType.Flat}
+            key={i.comment.id}
+            nodes={[commentToFlatNode(i)]}
+            viewType={"flat"}
             admins={this.props.admins}
             noBorder
             showCommunity
             showContext
-            enableDownvotes={this.props.enableDownvotes}
-            voteDisplayMode={this.props.voteDisplayMode}
+            hideImages={false}
             allLanguages={this.props.allLanguages}
             siteLanguages={this.props.siteLanguages}
-            onCommentReplyRead={this.props.onCommentReplyRead}
-            onPersonMentionRead={this.props.onPersonMentionRead}
+            myUserInfo={this.props.myUserInfo}
+            localSite={this.props.localSite}
             onCreateComment={this.props.onCreateComment}
             onEditComment={this.props.onEditComment}
             onCommentVote={this.props.onCommentVote}
             onBlockPerson={this.props.onBlockPerson}
+            onBlockCommunity={this.props.onBlockCommunity}
             onSaveComment={this.props.onSaveComment}
             onDeleteComment={this.props.onDeleteComment}
             onRemoveComment={this.props.onRemoveComment}
@@ -193,26 +127,37 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             onCommentReport={this.props.onCommentReport}
             onPurgePerson={this.props.onPurgePerson}
             onPurgeComment={this.props.onPurgeComment}
+            onPersonNote={this.props.onPersonNote}
+            onLockComment={this.props.onLockComment}
           />
         );
       }
-      case ItemEnum.Post: {
-        const p = i.view as PostView;
+      case "post": {
         return (
           <PostListing
-            key={i.id}
-            post_view={p}
+            key={i.post.id}
+            postView={i}
+            showCrossPosts="show_separately"
             admins={this.props.admins}
+            postListingMode="small_card"
             showCommunity
-            enableDownvotes={this.props.enableDownvotes}
-            voteDisplayMode={this.props.voteDisplayMode}
+            crossPosts={[]}
+            showBody={"preview"}
+            hideImage={false}
+            viewOnly={false}
+            disableAutoMarkAsRead={false}
+            editLoading={false}
             enableNsfw={this.props.enableNsfw}
+            showAdultConsentModal={this.props.showAdultConsentModal}
             allLanguages={this.props.allLanguages}
             siteLanguages={this.props.siteLanguages}
+            myUserInfo={this.props.myUserInfo}
+            localSite={this.props.localSite}
             onPostEdit={this.props.onPostEdit}
             onPostVote={this.props.onPostVote}
             onPostReport={this.props.onPostReport}
             onBlockPerson={this.props.onBlockPerson}
+            onBlockCommunity={this.props.onBlockCommunity}
             onLockPost={this.props.onLockPost}
             onDeletePost={this.props.onDeletePost}
             onRemovePost={this.props.onRemovePost}
@@ -225,41 +170,19 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             onAddModToCommunity={this.props.onAddModToCommunity}
             onAddAdmin={this.props.onAddAdmin}
             onTransferCommunity={this.props.onTransferCommunity}
-            onMarkPostAsRead={this.props.onMarkPostAsRead}
             onHidePost={async () => {}}
+            markable
+            onMarkPostAsRead={this.props.onMarkPostAsRead}
+            onPersonNote={this.props.onPersonNote}
+            onScrollIntoCommentsClick={() => {}}
           />
         );
       }
-      default:
-        return <div />;
     }
   }
 
-  overview() {
-    let id = 0;
-    const comments: ItemType[] = this.props.personRes.comments.map(r => ({
-      id: id++,
-      type_: ItemEnum.Comment,
-      view: r,
-      published: r.comment.published,
-      score: r.counts.score,
-    }));
-    const posts: ItemType[] = this.props.personRes.posts.map(r => ({
-      id: id++,
-      type_: ItemEnum.Post,
-      view: r,
-      published: r.post.published,
-      score: r.counts.score,
-    }));
-
-    const combined = [...comments, ...posts];
-
-    // Sort it
-    if (this.props.sort === "New") {
-      combined.sort((a, b) => b.published.localeCompare(a.published));
-    } else {
-      combined.sort((a, b) => Number(b.score - a.score));
-    }
+  render(): InfernoNode {
+    const combined: PersonContentCombinedView[] = this.props.content;
 
     return (
       <div>
@@ -269,130 +192,5 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
         ])}
       </div>
     );
-  }
-
-  comments() {
-    return (
-      <div>
-        <CommentNodes
-          nodes={commentsToFlatNodes(this.props.personRes.comments)}
-          viewType={CommentViewType.Flat}
-          admins={this.props.admins}
-          isTopLevel
-          showCommunity
-          showContext
-          enableDownvotes={this.props.enableDownvotes}
-          voteDisplayMode={this.props.voteDisplayMode}
-          allLanguages={this.props.allLanguages}
-          siteLanguages={this.props.siteLanguages}
-          onCommentReplyRead={this.props.onCommentReplyRead}
-          onPersonMentionRead={this.props.onPersonMentionRead}
-          onCreateComment={this.props.onCreateComment}
-          onEditComment={this.props.onEditComment}
-          onCommentVote={this.props.onCommentVote}
-          onBlockPerson={this.props.onBlockPerson}
-          onSaveComment={this.props.onSaveComment}
-          onDeleteComment={this.props.onDeleteComment}
-          onRemoveComment={this.props.onRemoveComment}
-          onDistinguishComment={this.props.onDistinguishComment}
-          onAddModToCommunity={this.props.onAddModToCommunity}
-          onAddAdmin={this.props.onAddAdmin}
-          onBanPersonFromCommunity={this.props.onBanPersonFromCommunity}
-          onBanPerson={this.props.onBanPerson}
-          onTransferCommunity={this.props.onTransferCommunity}
-          onFetchChildren={this.props.onFetchChildren}
-          onCommentReport={this.props.onCommentReport}
-          onPurgePerson={this.props.onPurgePerson}
-          onPurgeComment={this.props.onPurgeComment}
-        />
-      </div>
-    );
-  }
-
-  posts() {
-    return (
-      <div>
-        {this.props.personRes.posts.map(post => (
-          <>
-            <PostListing
-              post_view={post}
-              admins={this.props.admins}
-              showCommunity
-              enableDownvotes={this.props.enableDownvotes}
-              voteDisplayMode={this.props.voteDisplayMode}
-              enableNsfw={this.props.enableNsfw}
-              allLanguages={this.props.allLanguages}
-              siteLanguages={this.props.siteLanguages}
-              onPostEdit={this.props.onPostEdit}
-              onPostVote={this.props.onPostVote}
-              onPostReport={this.props.onPostReport}
-              onBlockPerson={this.props.onBlockPerson}
-              onLockPost={this.props.onLockPost}
-              onDeletePost={this.props.onDeletePost}
-              onRemovePost={this.props.onRemovePost}
-              onSavePost={this.props.onSavePost}
-              onFeaturePost={this.props.onFeaturePost}
-              onPurgePerson={this.props.onPurgePerson}
-              onPurgePost={this.props.onPurgePost}
-              onBanPersonFromCommunity={this.props.onBanPersonFromCommunity}
-              onBanPerson={this.props.onBanPerson}
-              onAddModToCommunity={this.props.onAddModToCommunity}
-              onAddAdmin={this.props.onAddAdmin}
-              onTransferCommunity={this.props.onTransferCommunity}
-              onMarkPostAsRead={this.props.onMarkPostAsRead}
-              onHidePost={async () => {}}
-            />
-            <hr className="my-3" />
-          </>
-        ))}
-      </div>
-    );
-  }
-
-  upvoted() {
-    let id = 0;
-    const comments: ItemType[] = this.props.likedCommentsRes
-      ? this.props.likedCommentsRes.comments.map(r => ({
-          id: id++,
-          type_: ItemEnum.Comment,
-          view: r,
-          published: r.comment.published,
-          score: r.counts.score,
-        }))
-      : [];
-    const posts: ItemType[] = this.props.likedPostsRes
-      ? this.props.likedPostsRes.posts.map(r => ({
-          id: id++,
-          type_: ItemEnum.Post,
-          view: r,
-          published: r.post.published,
-          score: r.counts.score,
-        }))
-      : [];
-
-    const combined = [...comments, ...posts];
-
-    // Sort it
-    if (this.props.sort === "New") {
-      combined.sort((a, b) => b.published.localeCompare(a.published));
-    } else if (this.props.sort === "Old") {
-      combined.sort((a, b) => b.published.localeCompare(a.published));
-      combined.reverse();
-    } else {
-      combined.sort((a, b) => Number(b.score - a.score));
-    }
-
-    return (
-      <div>
-        {combined.map(i => [
-          this.renderItemType(i),
-          <hr key={i.type_} className="my-3" />,
-        ])}
-      </div>
-    );
-  }
-
-  handlePageChange(val: number) {
-    this.props.onPageChange(val);
   }
 }

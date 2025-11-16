@@ -2,70 +2,50 @@ import { getQueryString, validInstanceTLD } from "@utils/helpers";
 import classNames from "classnames";
 import { NoOptionI18nKeys } from "i18next";
 import { Component, MouseEventHandler, createRef, linkEvent } from "inferno";
-import { CommunityView } from "lemmy-js-client";
-import { I18NextService, UserService } from "../../services";
+import { CommunityFollowerState, DbUrl } from "lemmy-js-client";
+import { I18NextService } from "../../services";
 import { VERSION } from "../../version";
 import { Icon, Spinner } from "./icon";
-import { toast } from "../../toast";
+import { toast } from "@utils/app";
 import { modalMixin } from "../mixins/modal-mixin";
 
 interface SubscribeButtonProps {
-  communityView: CommunityView;
+  followState: CommunityFollowerState | undefined;
+  apId: DbUrl;
   onFollow: MouseEventHandler;
   onUnFollow: MouseEventHandler;
   loading?: boolean;
   isLink?: boolean;
+  showRemoteFetch: boolean;
 }
 
 export function SubscribeButton({
-  communityView: {
-    subscribed,
-    community: { actor_id },
-  },
+  followState,
+  apId,
   onFollow,
   onUnFollow,
   loading = false,
   isLink = false,
+  showRemoteFetch,
 }: SubscribeButtonProps) {
-  let i18key: NoOptionI18nKeys;
+  const buttonClass = classNames("btn", {
+    "btn-link p-0": isLink,
+    [`btn-secondary d-block mb-2 w-100 btn-${followState === "pending" ? "warning" : "secondary"}`]:
+      !isLink,
+  });
 
-  switch (subscribed) {
-    case "NotSubscribed": {
-      i18key = "subscribe";
-
-      break;
-    }
-    case "Subscribed": {
-      i18key = "joined";
-
-      break;
-    }
-    default: {
-      i18key = "subscribe_pending";
-
-      break;
-    }
-  }
-
-  const buttonClass = classNames(
-    "btn",
-    isLink ? "btn-link d-inline-block" : "d-block mb-2 w-100",
-  );
-
-  if (!UserService.Instance.myUserInfo) {
+  if (showRemoteFetch) {
     return (
       <>
         <button
           type="button"
-          className={classNames(buttonClass, {
-            "btn-secondary": !isLink,
-          })}
+          className={buttonClass}
           data-bs-toggle="modal"
           data-bs-target="#remoteFetchModal"
         >
           {I18NextService.i18n.t("subscribe")}
         </button>
-        <RemoteFetchModal communityActorId={actor_id} />
+        <RemoteFetchModal apId={apId} />
       </>
     );
   }
@@ -73,27 +53,43 @@ export function SubscribeButton({
   return (
     <button
       type="button"
-      className={classNames(buttonClass, {
-        [`btn-${subscribed === "Pending" ? "warning" : "secondary"}`]: !isLink,
-      })}
-      onClick={subscribed === "NotSubscribed" ? onFollow : onUnFollow}
+      className={buttonClass}
+      onClick={!followState ? onFollow : onUnFollow}
     >
       {loading ? (
         <Spinner />
       ) : (
         <>
-          {subscribed === "Subscribed" && (
+          {followState === "accepted" && (
             <Icon icon="check" classes="icon-inline me-1" />
           )}
-          {I18NextService.i18n.t(i18key)}
+          {I18NextService.i18n.t(followStateKey(followState))}
         </>
       )}
     </button>
   );
 }
 
+function followStateKey(
+  followState?: CommunityFollowerState,
+): NoOptionI18nKeys {
+  switch (followState) {
+    case undefined: {
+      return "subscribe";
+    }
+    case "accepted": {
+      return "joined";
+    }
+    case "pending":
+    case "approval_required":
+    default: {
+      return "subscribe_pending";
+    }
+  }
+}
+
 interface RemoteFetchModalProps {
-  communityActorId: string;
+  apId: string;
   show?: boolean;
 }
 
@@ -106,7 +102,7 @@ function handleInput(i: RemoteFetchModal, event: any) {
 }
 
 function submitRemoteFollow(
-  { state: { instanceText }, props: { communityActorId } }: RemoteFetchModal,
+  { state: { instanceText }, props: { apId } }: RemoteFetchModal,
   event: Event,
 ) {
   event.preventDefault();
@@ -133,7 +129,7 @@ function submitRemoteFollow(
   }
 
   window.location.href = `${instanceText}/activitypub/externalInteraction${getQueryString(
-    { uri: communityActorId },
+    { uri: apId },
   )}`;
 }
 

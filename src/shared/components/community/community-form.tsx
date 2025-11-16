@@ -7,6 +7,7 @@ import {
   CreateCommunity,
   EditCommunity,
   Language,
+  MyUserInfo,
 } from "lemmy-js-client";
 import { I18NextService } from "../../services";
 import { Icon, Spinner } from "../common/icon";
@@ -14,23 +15,27 @@ import { ImageUploadForm } from "../common/image-upload-form";
 import { LanguageSelect } from "../common/language-select";
 import { MarkdownTextArea } from "../common/markdown-textarea";
 import { tippyMixin } from "../mixins/tippy-mixin";
-import { validActorRegexPattern } from "../../config";
+import { validActorRegexPattern } from "@utils/config";
+import { userNotLoggedInOrBanned } from "@utils/app";
 
 interface CommunityFormProps {
   community_view?: CommunityView; // If a community is given, that means this is an edit
-  allLanguages: Language[];
-  siteLanguages: number[];
+  allLanguages?: Language[];
+  siteLanguages?: number[];
   communityLanguages?: number[];
   onCancel?(): any;
+  // TODO get rid of this, use onCreate and onEdit
   onUpsertCommunity(form: CreateCommunity | EditCommunity): void;
   enableNsfw?: boolean;
   loading?: boolean;
+  myUserInfo: MyUserInfo | undefined;
 }
 
 interface CommunityFormState {
   form: {
     name?: string;
     title?: string;
+    sidebar?: string;
     description?: string;
     icon?: string;
     banner?: string;
@@ -50,33 +55,30 @@ export class CommunityForm extends Component<
   private id = `community-form-${randomStr()}`;
 
   state: CommunityFormState = {
-    form: {},
+    form: this.initCommunityForm(),
     submitted: false,
   };
 
   constructor(props: any, context: any) {
     super(props, context);
 
-    this.handleCommunityDescriptionChange =
-      this.handleCommunityDescriptionChange.bind(this);
+    this.handleCommunitySidebarChange =
+      this.handleCommunitySidebarChange.bind(this);
 
-    this.handleIconUpload = this.handleIconUpload.bind(this);
-    this.handleIconRemove = this.handleIconRemove.bind(this);
-
-    this.handleBannerUpload = this.handleBannerUpload.bind(this);
-    this.handleBannerRemove = this.handleBannerRemove.bind(this);
+    this.handleIconChange = this.handleIconChange.bind(this);
+    this.handleBannerChange = this.handleBannerChange.bind(this);
 
     this.handleDiscussionLanguageChange =
       this.handleDiscussionLanguageChange.bind(this);
+  }
 
+  initCommunityForm() {
     const cv = this.props.community_view;
-
-    if (cv) {
-      this.state = {
-        ...this.state,
-        form: {
+    return cv
+      ? {
           name: cv.community.name,
           title: cv.community.title,
+          sidebar: cv.community.sidebar,
           description: cv.community.description,
           nsfw: cv.community.nsfw,
           icon: cv.community.icon,
@@ -84,9 +86,8 @@ export class CommunityForm extends Component<
           posting_restricted_to_mods: cv.community.posting_restricted_to_mods,
           discussion_languages: this.props.communityLanguages,
           visibilty: cv.community.visibility,
-        },
-      };
-    }
+        }
+      : {};
   }
 
   render() {
@@ -167,13 +168,30 @@ export class CommunityForm extends Component<
             {I18NextService.i18n.t("icon")}
           </label>
           <div className="col-12 col-sm-10">
-            <ImageUploadForm
-              uploadTitle={I18NextService.i18n.t("upload_icon")}
-              imageSrc={this.state.form.icon}
-              onUpload={this.handleIconUpload}
-              onRemove={this.handleIconRemove}
-              rounded
-            />
+            {this.props.community_view && (
+              <ImageUploadForm
+                uploadTitle={I18NextService.i18n.t("upload_icon")}
+                imageSrc={this.state.form.icon}
+                uploadKey="uploadCommunityIcon"
+                removeKey="deleteCommunityIcon"
+                communityId={this.props.community_view.community.id}
+                onImageChange={this.handleIconChange}
+                rounded
+                disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
+              />
+            )}
+            {!this.props.community_view && (
+              <ImageUploadForm
+                uploadTitle={I18NextService.i18n.t("upload_icon")}
+                imageSrc={this.state.form.icon}
+                uploadKey="uploadImage"
+                removeKey="deleteMedia"
+                onImageChange={this.handleIconChange}
+                rounded
+                disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
+                noConfirmation
+              />
+            )}
           </div>
         </div>
         <div className="mb-3 row">
@@ -181,11 +199,45 @@ export class CommunityForm extends Component<
             {I18NextService.i18n.t("banner")}
           </label>
           <div className="col-12 col-sm-10">
-            <ImageUploadForm
-              uploadTitle={I18NextService.i18n.t("upload_banner")}
-              imageSrc={this.state.form.banner}
-              onUpload={this.handleBannerUpload}
-              onRemove={this.handleBannerRemove}
+            {this.props.community_view && (
+              <ImageUploadForm
+                uploadTitle={I18NextService.i18n.t("upload_banner")}
+                imageSrc={this.state.form.banner}
+                uploadKey="uploadCommunityBanner"
+                removeKey="deleteCommunityBanner"
+                communityId={this.props.community_view.community.id}
+                onImageChange={this.handleBannerChange}
+                disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
+              />
+            )}
+            {!this.props.community_view && (
+              <ImageUploadForm
+                uploadTitle={I18NextService.i18n.t("upload_banner")}
+                imageSrc={this.state.form.banner}
+                uploadKey="uploadImage"
+                removeKey="deleteMedia"
+                onImageChange={this.handleBannerChange}
+                disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
+                noConfirmation
+              />
+            )}
+          </div>
+        </div>
+        <div className="mb-3 row">
+          <label
+            className="col-12 col-sm-2 col-form-label"
+            htmlFor="community-description"
+          >
+            {I18NextService.i18n.t("description")}
+          </label>
+          <div className="col-12 col-sm-10">
+            <input
+              type="text"
+              className="form-control"
+              id="community-description"
+              value={this.state.form.description}
+              onInput={linkEvent(this, this.handleCommunityDescriptionChange)}
+              maxLength={150}
             />
           </div>
         </div>
@@ -195,12 +247,13 @@ export class CommunityForm extends Component<
           </label>
           <div className="col-12 col-sm-10">
             <MarkdownTextArea
-              initialContent={this.state.form.description}
-              placeholder={I18NextService.i18n.t("description") ?? undefined}
-              onContentChange={this.handleCommunityDescriptionChange}
+              initialContent={this.state.form.sidebar}
+              placeholder={I18NextService.i18n.t("sidebar") ?? undefined}
+              onContentChange={this.handleCommunitySidebarChange}
               hideNavigationWarnings
               allLanguages={[]}
               siteLanguages={[]}
+              myUserInfo={this.props.myUserInfo}
             />
           </div>
         </div>
@@ -232,11 +285,26 @@ export class CommunityForm extends Component<
               className="form-select position-static"
               id="community-visibility"
               onChange={linkEvent(this, this.handleCommunityVisibilityChange)}
-              value={this.state.form.visibilty ?? "Public"}
+              value={this.state.form.visibilty ?? "public"}
             >
-              <option value="Public">{I18NextService.i18n.t("public")}</option>
-              <option value="LocalOnly">
-                {I18NextService.i18n.t("local_only")}
+              <option value="public">
+                {I18NextService.i18n.t("community_visibility_public")}
+              </option>
+              <option value="unlisted">
+                {I18NextService.i18n.t("community_visibility_unlisted")}
+              </option>
+              <option value="local_only_public">
+                {I18NextService.i18n.t(
+                  "community_visibility_local_only_public",
+                )}
+              </option>
+              <option value="local_only_private">
+                {I18NextService.i18n.t(
+                  "community_visibility_local_only_private",
+                )}
+              </option>
+              <option value="private">
+                {I18NextService.i18n.t("community_visibility_private")}
               </option>
             </select>
           </div>
@@ -268,8 +336,9 @@ export class CommunityForm extends Component<
           siteLanguages={this.props.siteLanguages}
           showSite
           selectedLanguageIds={this.state.form.discussion_languages}
-          multiple={true}
+          multiple
           onChange={this.handleDiscussionLanguageChange}
+          myUserInfo={this.props.myUserInfo}
         />
         <div className="mb-3 row">
           <div className="col-12">
@@ -312,6 +381,7 @@ export class CommunityForm extends Component<
       i.props.onUpsertCommunity({
         community_id: cv.community.id,
         title: cForm.title,
+        sidebar: cForm.sidebar,
         description: cForm.description,
         icon: cForm.icon,
         banner: cForm.banner,
@@ -345,8 +415,12 @@ export class CommunityForm extends Component<
     i.setState(s => ((s.form.title = event.target.value), s));
   }
 
-  handleCommunityDescriptionChange(val: string) {
-    this.setState(s => ((s.form.description = val), s));
+  handleCommunityDescriptionChange(i: CommunityForm, event: any) {
+    i.setState(s => ((s.form.description = event.target.value), s));
+  }
+
+  handleCommunitySidebarChange(val: string) {
+    this.setState(s => ((s.form.sidebar = val), s));
   }
 
   handleCommunityNsfwChange(i: CommunityForm, event: any) {
@@ -367,20 +441,12 @@ export class CommunityForm extends Component<
     i.props.onCancel?.();
   }
 
-  handleIconUpload(url: string) {
+  handleIconChange(url?: string) {
     this.setState(s => ((s.form.icon = url), s));
   }
 
-  handleIconRemove() {
-    this.setState(s => ((s.form.icon = ""), s));
-  }
-
-  handleBannerUpload(url: string) {
+  handleBannerChange(url: string) {
     this.setState(s => ((s.form.banner = url), s));
-  }
-
-  handleBannerRemove() {
-    this.setState(s => ((s.form.banner = ""), s));
   }
 
   handleDiscussionLanguageChange(val: number[]) {

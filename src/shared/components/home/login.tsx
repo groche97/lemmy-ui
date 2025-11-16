@@ -1,6 +1,6 @@
-import { setIsoData } from "@utils/app";
+import { setIsoData, updateMyUserInfo } from "@utils/app";
 import { isBrowser, refreshTheme } from "@utils/browser";
-import { getQueryParams } from "@utils/helpers";
+import { getQueryParams, validEmail } from "@utils/helpers";
 import { Component, linkEvent } from "inferno";
 import { RouteComponentProps } from "inferno-router/dist/Route";
 import {
@@ -16,15 +16,16 @@ import {
   LOADING_REQUEST,
   RequestState,
 } from "../../services/HttpService";
-import { toast } from "../../toast";
+import { toast } from "@utils/app";
 import { HtmlTags } from "../common/html-tags";
 import { Spinner } from "../common/icon";
 import PasswordInput from "../common/password-input";
 import TotpModal from "../common/modal/totp-modal";
 import { UnreadCounterService } from "../../services";
-import { RouteData } from "../../interfaces";
-import { IRoutePropsWithFetch } from "../../routes";
+import { RouteData } from "@utils/types";
+import { IRoutePropsWithFetch } from "@utils/routes";
 import { simpleScrollMixin } from "../mixins/scroll-mixin";
+import { NoOptionI18nKeys } from "i18next";
 
 interface LoginProps {
   prev?: string;
@@ -44,23 +45,28 @@ interface State {
   form: {
     username_or_email: string;
     password: string;
+    stay_logged_in: boolean;
   };
   siteRes: GetSiteResponse;
   show2faModal: boolean;
   showOAuthModal: boolean;
+  showResendVerificationEmailBtn: boolean;
 }
 
 async function handleLoginSuccess(i: Login, loginRes: LoginResponse) {
   UserService.Instance.login({
     res: loginRes,
   });
-  const site = await HttpService.client.getSite();
+  const [site, myUser] = await Promise.all([
+    HttpService.client.getSite(),
+    HttpService.client.getMyUser(),
+  ]);
 
-  if (site.state === "success") {
-    UserService.Instance.myUserInfo = site.data.my_user;
+  if (site.state === "success" && myUser.state === "success") {
     const isoData = setIsoData(i.context);
-    isoData.site_res.oauth_providers = site.data.oauth_providers;
-    isoData.site_res.admin_oauth_providers = site.data.admin_oauth_providers;
+    updateMyUserInfo(myUser.data);
+    isoData.siteRes.oauth_providers = site.data.oauth_providers;
+    isoData.siteRes.admin_oauth_providers = site.data.admin_oauth_providers;
     refreshTheme();
   }
 
@@ -79,7 +85,7 @@ async function handleLoginSuccess(i: Login, loginRes: LoginResponse) {
 
 async function handleLoginSubmit(i: Login, event: any) {
   event.preventDefault();
-  const { password, username_or_email } = i.state.form;
+  const { password, username_or_email, stay_logged_in } = i.state.form;
 
   if (username_or_email && password) {
     i.setState({ loginRes: LOADING_REQUEST });
@@ -87,16 +93,24 @@ async function handleLoginSubmit(i: Login, event: any) {
     const loginRes = await HttpService.client.login({
       username_or_email,
       password,
+      stay_logged_in,
     });
     switch (loginRes.state) {
       case "failed": {
         if (loginRes.err.name === "missing_totp_token") {
           i.setState({ show2faModal: true });
+        } else if (loginRes.err.name === "not_found") {
+          toast(I18NextService.i18n.t("incorrect_login"), "danger");
+        } else if (loginRes.err.name === "email_not_verified") {
+          toast(I18NextService.i18n.t(loginRes.err.name), "danger");
+
+          // Show the resend verification email button
+          i.setState({ showResendVerificationEmailBtn: true });
         } else {
-          let errStr = I18NextService.i18n.t(
+          let errStr: string = I18NextService.i18n.t(
             loginRes.err.name === "registration_application_is_pending"
               ? "registration_application_pending"
-              : loginRes.err.name,
+              : (loginRes.err.name as NoOptionI18nKeys),
           );
           // If there's an error message, append it
           if (loginRes.err.message) {
@@ -166,8 +180,31 @@ function handleLoginPasswordChange(i: Login, event: any) {
   i.setState(prevState => (prevState.form.password = event.target.value));
 }
 
+function handleStayLoggedInChange(i: Login, event: any) {
+  i.setState(
+    prevState => (prevState.form.stay_logged_in = event.target.checked),
+  );
+}
+
 function handleClose2faModal(i: Login) {
   i.setState({ show2faModal: false });
+}
+
+async function handleResendVerificationEmail(i: Login) {
+  const res = await HttpService.client.resendVerificationEmail({
+    email: i.state.form.username_or_email,
+  });
+
+  const successful = res.state === "success";
+  if (successful) {
+    toast(I18NextService.i18n.t("verify_email_sent"));
+  } else {
+    toast(I18NextService.i18n.t("incorrect_login"), "danger");
+  }
+
+  i.setState({ showResendVerificationEmailBtn: false });
+
+  return successful;
 }
 
 type LoginRouteProps = RouteComponentProps<Record<string, never>> & LoginProps;
@@ -186,10 +223,12 @@ export class Login extends Component<LoginRouteProps, State> {
     form: {
       username_or_email: "",
       password: "",
+      stay_logged_in: false,
     },
-    siteRes: this.isoData.site_res,
+    siteRes: this.isoData.siteRes,
     show2faModal: false,
     showOAuthModal: false,
+    showResendVerificationEmailBtn: false,
   };
 
   constructor(props: any, context: any) {
@@ -306,6 +345,15 @@ export class Login extends Component<LoginRouteProps, State> {
                 required
                 minLength={3}
               />
+              {this.state.showResendVerificationEmailBtn &&
+                validEmail(this.state.form.username_or_email) && (
+                  <button
+                    className="btn p-0 btn-link d-inline-block float-right text-muted small font-weight-bold pointer-events not-allowed"
+                    onClick={linkEvent(this, handleResendVerificationEmail)}
+                  >
+                    {I18NextService.i18n.t("resend_verification_email")}
+                  </button>
+                )}
             </div>
           </div>
           <div className="mb-3">
@@ -316,6 +364,20 @@ export class Login extends Component<LoginRouteProps, State> {
               label={I18NextService.i18n.t("password")}
               showForgotLink
             />
+          </div>
+          <div className="input-group mb-3">
+            <div className="form-check">
+              <input
+                className="form-check-input"
+                id="stay-logged-in"
+                type="checkbox"
+                checked={this.state.form.stay_logged_in}
+                onChange={linkEvent(this, handleStayLoggedInChange)}
+              />
+              <label className="form-check-label" htmlFor="stay-logged-in">
+                {I18NextService.i18n.t("stay_logged_in")}
+              </label>
+            </div>
           </div>
           <div className="mb-3 row">
             <div className="col-sm-10">

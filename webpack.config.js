@@ -57,6 +57,8 @@ module.exports = (env, argv) => {
       alias: {
         "@": resolve(__dirname, "src/"),
         "@utils": resolve(__dirname, "src/shared/utils/"),
+        "@services/*": resolve(__dirname, "src/shared/services/*"),
+        "@components/*": resolve(__dirname, "src/shared/components/*"),
       },
     },
     performance: {
@@ -111,11 +113,13 @@ module.exports = (env, argv) => {
     },
     target: "node",
     externals: [nodeExternals(), "inferno-helmet"],
+    plugins: [...base.plugins],
   };
 
   const clientConfig = {
     ...base,
     entry: "./src/client/index.tsx",
+    target: "browserslist", // looks up package.json
     output: {
       ...base.output,
       filename: "js/client.js",
@@ -135,6 +139,17 @@ module.exports = (env, argv) => {
     ],
   };
 
+  const embeddedConfig = {
+    ...base,
+    entry: "./src/embedded/index.ts",
+    target: "browserslist", // looks up package.json
+    output: {
+      ...base.output,
+      filename: "js/embedded.js",
+    },
+    plugins: [...base.plugins],
+  };
+
   if (mode === "development") {
     // serverConfig.cache = {
     //   type: "filesystem",
@@ -150,5 +165,5 @@ module.exports = (env, argv) => {
     serverConfig.plugins.push(new BundleAnalyzerPlugin());
   }
 
-  return [serverConfig, clientConfig];
+  return [serverConfig, clientConfig, embeddedConfig];
 };

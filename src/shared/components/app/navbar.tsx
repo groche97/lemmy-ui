@@ -1,17 +1,21 @@
 import { showAvatars } from "@utils/app";
 import { isBrowser } from "@utils/browser";
 import { numToSI } from "@utils/helpers";
-import { amAdmin, canCreateCommunity } from "@utils/roles";
+import {
+  amAdmin,
+  moderatesPrivateCommunity,
+  moderatesSomething,
+} from "@utils/roles";
 import { Component, createRef, linkEvent } from "inferno";
 import { NavLink } from "inferno-router";
-import { GetSiteResponse } from "lemmy-js-client";
-import { donateLemmyUrl } from "../../config";
+import { GetSiteResponse, MyUserInfo } from "lemmy-js-client";
+import { donateLemmyUrl } from "@utils/config";
 import {
   I18NextService,
   UserService,
   UnreadCounterService,
 } from "../../services";
-import { toast } from "../../toast";
+import { toast } from "@utils/app";
 import { Icon } from "../common/icon";
 import { PictrsImage } from "../common/pictrs-image";
 import { Subscription } from "rxjs";
@@ -19,13 +23,15 @@ import { tippyMixin } from "../mixins/tippy-mixin";
 
 interface NavbarProps {
   siteRes?: GetSiteResponse;
+  myUserInfo: MyUserInfo | undefined;
 }
 
 interface NavbarState {
   onSiteBanner?(url: string): any;
-  unreadInboxCount: number;
+  unreadNotifsCount: number;
   unreadReportCount: number;
   unreadApplicationCount: number;
+  unreadPendingFollowsCount: number;
 }
 
 function handleCollapseClick(i: Navbar) {
@@ -47,14 +53,16 @@ function handleLogOut(i: Navbar) {
 export class Navbar extends Component<NavbarProps, NavbarState> {
   collapseButtonRef = createRef<HTMLButtonElement>();
   mobileMenuRef = createRef<HTMLDivElement>();
-  unreadInboxCountSubscription: Subscription;
+  unreadNotifsCountSubscription: Subscription;
   unreadReportCountSubscription: Subscription;
   unreadApplicationCountSubscription: Subscription;
+  unreadPendingFollowsSubscription: Subscription;
 
   state: NavbarState = {
-    unreadInboxCount: 0,
+    unreadNotifsCount: 0,
     unreadReportCount: 0,
     unreadApplicationCount: 0,
+    unreadPendingFollowsCount: 0,
   };
 
   constructor(props: any, context: any) {
@@ -68,18 +76,30 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
     if (isBrowser()) {
       // On the first load, check the unreads
       this.requestNotificationPermission();
-      this.unreadInboxCountSubscription =
-        UnreadCounterService.Instance.unreadInboxCountSubject.subscribe(
-          unreadInboxCount => this.setState({ unreadInboxCount }),
+      UnreadCounterService.Instance.configure(this.props.myUserInfo);
+      this.unreadNotifsCountSubscription =
+        UnreadCounterService.Instance.unreadCountSubject.subscribe(
+          unreadNotifsCount => this.setState({ unreadNotifsCount }),
         );
       this.unreadReportCountSubscription =
         UnreadCounterService.Instance.unreadReportCountSubject.subscribe(
           unreadReportCount => this.setState({ unreadReportCount }),
         );
-      this.unreadApplicationCountSubscription =
-        UnreadCounterService.Instance.unreadApplicationCountSubject.subscribe(
-          unreadApplicationCount => this.setState({ unreadApplicationCount }),
-        );
+      if (moderatesSomething(this.props.myUserInfo)) {
+        this.unreadApplicationCountSubscription =
+          UnreadCounterService.Instance.unreadApplicationCountSubject.subscribe(
+            unreadApplicationCount => this.setState({ unreadApplicationCount }),
+          );
+      }
+      if (moderatesPrivateCommunity(this.props.myUserInfo)) {
+        this.unreadPendingFollowsSubscription =
+          UnreadCounterService.Instance.pendingFollowCountSubject.subscribe(
+            unreadPendingFollows =>
+              this.setState({
+                unreadPendingFollowsCount: unreadPendingFollows,
+              }),
+          );
+      }
 
       document.addEventListener("mouseup", this.handleOutsideMenuClick);
     }
@@ -87,15 +107,23 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
 
   componentWillUnmount() {
     document.removeEventListener("mouseup", this.handleOutsideMenuClick);
-    this.unreadInboxCountSubscription.unsubscribe();
+    this.unreadNotifsCountSubscription.unsubscribe();
     this.unreadReportCountSubscription.unsubscribe();
-    this.unreadApplicationCountSubscription.unsubscribe();
+    if (moderatesSomething(this.props.myUserInfo)) {
+      this.unreadApplicationCountSubscription.unsubscribe();
+    }
+    if (moderatesPrivateCommunity(this.props.myUserInfo)) {
+      this.unreadPendingFollowsSubscription.unsubscribe();
+    }
   }
 
   // TODO class active corresponding to current pages
   render() {
     const siteView = this.props.siteRes?.site_view;
-    const person = UserService.Instance.myUserInfo?.local_user_view.person;
+    const person = this.props.myUserInfo?.local_user_view.person;
+    const registrationClosed =
+      siteView?.local_site.registration_mode === "closed";
+
     return (
       <div className="shadow-sm">
         <nav
@@ -109,7 +137,7 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
             className="d-flex align-items-center navbar-brand me-md-3"
             onMouseUp={linkEvent(this, handleCollapseClick)}
           >
-            {siteView?.site.icon && showAvatars() && (
+            {siteView?.site.icon && showAvatars(this.props.myUserInfo) && (
               <PictrsImage src={siteView.site.icon} icon />
             )}
             {siteView?.site.name}
@@ -118,23 +146,23 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
             <ul className="navbar-nav d-flex flex-row ms-auto d-md-none">
               <li id="navMessages" className="nav-item nav-item-icon">
                 <NavLink
-                  to="/inbox"
+                  to="/notifications"
                   className="p-1 nav-link border-0 nav-messages"
                   title={I18NextService.i18n.t("unread_messages", {
-                    count: Number(this.state.unreadInboxCount),
-                    formattedCount: numToSI(this.state.unreadInboxCount),
+                    count: Number(this.state.unreadNotifsCount),
+                    formattedCount: numToSI(this.state.unreadNotifsCount),
                   })}
                   onMouseUp={linkEvent(this, handleCollapseClick)}
                 >
                   <Icon icon="bell" />
-                  {this.state.unreadInboxCount > 0 && (
+                  {this.state.unreadNotifsCount > 0 && (
                     <span className="mx-1 badge text-bg-light">
-                      {numToSI(this.state.unreadInboxCount)}
+                      {numToSI(this.state.unreadNotifsCount)}
                     </span>
                   )}
                 </NavLink>
               </li>
-              {UserService.Instance.moderatesSomething && (
+              {moderatesSomething(this.props.myUserInfo) && (
                 <li className="nav-item nav-item-icon">
                   <NavLink
                     to="/reports"
@@ -154,7 +182,8 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                   </NavLink>
                 </li>
               )}
-              {amAdmin() && (
+              {/* TODO: what is this section for and why does it duplicate everything? */}
+              {amAdmin(this.props.myUserInfo) && (
                 <li className="nav-item nav-item-icon">
                   <NavLink
                     to="/registration_applications"
@@ -211,34 +240,15 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                 </NavLink>
               </li>
               <li className="nav-item">
-                {/* TODO make sure this works: https://github.com/infernojs/inferno/issues/1608 */}
                 <NavLink
-                  to={{
-                    pathname: "/create_post",
-                    search: "",
-                    hash: "",
-                    key: "",
-                    state: { prevPath: this.currentLocation },
-                  }}
+                  to="/multi_communities"
                   className="nav-link"
-                  title={I18NextService.i18n.t("create_post")}
+                  title={I18NextService.i18n.t("multi_communities")}
                   onMouseUp={linkEvent(this, handleCollapseClick)}
                 >
-                  {I18NextService.i18n.t("create_post")}
+                  {I18NextService.i18n.t("multi_communities")}
                 </NavLink>
               </li>
-              {this.props.siteRes && canCreateCommunity(this.props.siteRes) && (
-                <li className="nav-item">
-                  <NavLink
-                    to="/create_community"
-                    className="nav-link"
-                    title={I18NextService.i18n.t("create_community")}
-                    onMouseUp={linkEvent(this, handleCollapseClick)}
-                  >
-                    {I18NextService.i18n.t("create_community")}
-                  </NavLink>
-                </li>
-              )}
               <li className="nav-item">
                 <a
                   className="nav-link d-inline-flex align-items-center d-md-inline-block"
@@ -266,7 +276,7 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                   </span>
                 </NavLink>
               </li>
-              {amAdmin() && (
+              {amAdmin(this.props.myUserInfo) && (
                 <li id="navAdmin" className="nav-item">
                   <NavLink
                     to="/admin"
@@ -286,28 +296,28 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                   <li id="navMessages" className="nav-item">
                     <NavLink
                       className="nav-link d-inline-flex align-items-center d-md-inline-block"
-                      to="/inbox"
+                      to="/notifications"
                       title={I18NextService.i18n.t("unread_messages", {
-                        count: Number(this.state.unreadInboxCount),
-                        formattedCount: numToSI(this.state.unreadInboxCount),
+                        count: Number(this.state.unreadNotifsCount),
+                        formattedCount: numToSI(this.state.unreadNotifsCount),
                       })}
                       onMouseUp={linkEvent(this, handleCollapseClick)}
                     >
                       <Icon icon="bell" />
                       <span className="badge text-bg-light d-inline ms-1 d-md-none ms-md-0">
                         {I18NextService.i18n.t("unread_messages", {
-                          count: Number(this.state.unreadInboxCount),
-                          formattedCount: numToSI(this.state.unreadInboxCount),
+                          count: Number(this.state.unreadNotifsCount),
+                          formattedCount: numToSI(this.state.unreadNotifsCount),
                         })}
                       </span>
-                      {this.state.unreadInboxCount > 0 && (
+                      {this.state.unreadNotifsCount > 0 && (
                         <span className="mx-1 badge text-bg-light">
-                          {numToSI(this.state.unreadInboxCount)}
+                          {numToSI(this.state.unreadNotifsCount)}
                         </span>
                       )}
                     </NavLink>
                   </li>
-                  {UserService.Instance.moderatesSomething && (
+                  {moderatesSomething(this.props.myUserInfo) && (
                     <li id="navModeration" className="nav-item">
                       <NavLink
                         className="nav-link d-inline-flex align-items-center d-md-inline-block"
@@ -335,7 +345,7 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                       </NavLink>
                     </li>
                   )}
-                  {amAdmin() && (
+                  {amAdmin(this.props.myUserInfo) && (
                     <li id="navApplications" className="nav-item">
                       <NavLink
                         to="/registration_applications"
@@ -371,17 +381,56 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                       </NavLink>
                     </li>
                   )}
+                  {moderatesPrivateCommunity(this.props.myUserInfo) && (
+                    <li id="navApplications" className="nav-item">
+                      <NavLink
+                        to="/pending_follows"
+                        className="nav-link d-inline-flex align-items-center d-md-inline-block"
+                        title={I18NextService.i18n.t(
+                          "pending_private_community_follows",
+                          {
+                            count: Number(this.state.unreadPendingFollowsCount),
+                            formattedCount: numToSI(
+                              this.state.unreadPendingFollowsCount,
+                            ),
+                          },
+                        )}
+                        onMouseUp={linkEvent(this, handleCollapseClick)}
+                      >
+                        <Icon icon="lock" />
+                        <span className="badge text-bg-light d-inline ms-1 d-md-none ms-md-0">
+                          {I18NextService.i18n.t(
+                            "pending_private_community_follows",
+                            {
+                              count: Number(
+                                this.state.unreadPendingFollowsCount,
+                              ),
+                              formattedCount: numToSI(
+                                this.state.unreadPendingFollowsCount,
+                              ),
+                            },
+                          )}
+                        </span>
+                        {this.state.unreadPendingFollowsCount > 0 && (
+                          <span className="mx-1 badge text-bg-light">
+                            {numToSI(this.state.unreadPendingFollowsCount)}
+                          </span>
+                        )}
+                      </NavLink>
+                    </li>
+                  )}
                   {person && (
                     <li id="dropdownUser" className="dropdown">
                       <button
                         type="button"
-                        className="btn btn-outline-secondary dropdown-toggle"
+                        className="btn dropdown-toggle"
                         aria-expanded="false"
                         data-bs-toggle="dropdown"
                       >
-                        {showAvatars() && person.avatar && (
-                          <PictrsImage src={person.avatar} icon />
-                        )}
+                        {showAvatars(this.props.myUserInfo) &&
+                          person.avatar && (
+                            <PictrsImage src={person.avatar} icon />
+                          )}
                         {person.display_name ?? person.name}
                       </button>
                       <ul
@@ -438,16 +487,18 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
                       {I18NextService.i18n.t("login")}
                     </NavLink>
                   </li>
-                  <li className="nav-item">
-                    <NavLink
-                      to="/signup"
-                      className="nav-link"
-                      title={I18NextService.i18n.t("sign_up")}
-                      onMouseUp={linkEvent(this, handleCollapseClick)}
-                    >
-                      {I18NextService.i18n.t("sign_up")}
-                    </NavLink>
-                  </li>
+                  {!registrationClosed && (
+                    <li className="nav-item">
+                      <NavLink
+                        to="/signup"
+                        className="nav-link"
+                        title={I18NextService.i18n.t("sign_up")}
+                        onMouseUp={linkEvent(this, handleCollapseClick)}
+                      >
+                        {I18NextService.i18n.t("sign_up")}
+                      </NavLink>
+                    </li>
+                  )}
                 </>
               )}
             </ul>
@@ -468,7 +519,7 @@ export class Navbar extends Component<NavbarProps, NavbarState> {
   }
 
   requestNotificationPermission() {
-    if (UserService.Instance.myUserInfo) {
+    if (this.props.myUserInfo) {
       document.addEventListener("lemmy-hydrated", function () {
         if (!Notification) {
           toast(I18NextService.i18n.t("notifications_error"), "danger");

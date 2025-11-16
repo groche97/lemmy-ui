@@ -13,23 +13,24 @@ import classNames from "classnames";
 import { Community, Person } from "lemmy-js-client";
 import { LoadingEllipses } from "../loading-ellipses";
 import { modalMixin } from "../../mixins/modal-mixin";
+import { NoOptionI18nKeys } from "i18next";
 
 export interface BanUpdateForm {
-  reason?: string;
+  reason: string;
   shouldRemoveOrRestoreData?: boolean;
   daysUntilExpires?: number;
 }
 
 interface ModActionFormModalPropsSiteBan {
   modActionType: "site-ban";
-  onSubmit: (form: BanUpdateForm) => Promise<void>;
+  onSubmit(form: BanUpdateForm): void;
   creator: Person;
   isBanned: boolean;
 }
 
 interface ModActionFormModalPropsCommunityBan {
   modActionType: "community-ban";
-  onSubmit: (form: BanUpdateForm) => Promise<void>;
+  onSubmit(form: BanUpdateForm): void;
   creator: Person;
   community?: Community;
   isBanned: boolean;
@@ -37,14 +38,20 @@ interface ModActionFormModalPropsCommunityBan {
 
 interface ModActionFormModalPropsPurgePerson {
   modActionType: "purge-person";
-  onSubmit: (reason: string) => Promise<void>;
+  onSubmit(reason: string): void;
   creator: Person;
 }
 
 interface ModActionFormModalPropsRemove {
   modActionType: "remove-post" | "remove-comment";
-  onSubmit: (reason: string) => Promise<void>;
+  onSubmit(reason: string): void;
   isRemoved: boolean;
+}
+
+interface ModActionFormModalPropsLock {
+  modActionType: "lock-post" | "lock-comment";
+  onSubmit(reason: string): void;
+  isLocked: boolean;
 }
 
 interface ModActionFormModalPropsRest {
@@ -54,7 +61,7 @@ interface ModActionFormModalPropsRest {
     | "report-message"
     | "purge-post"
     | "purge-comment";
-  onSubmit: (reason: string) => Promise<void>;
+  onSubmit(reason: string): void;
 }
 
 type ModActionFormModalProps = (
@@ -63,7 +70,8 @@ type ModActionFormModalProps = (
   | ModActionFormModalPropsRest
   | ModActionFormModalPropsPurgePerson
   | ModActionFormModalPropsRemove
-) & { onCancel: () => void; show: boolean; children?: InfernoNode };
+  | ModActionFormModalPropsLock
+) & { onCancel(): void; show: boolean; children?: InfernoNode };
 
 interface ModActionFormFormState {
   loading: boolean;
@@ -96,18 +104,18 @@ function handleTogglePermaBan(i: ModActionFormModal) {
   }));
 }
 
-async function handleSubmit(i: ModActionFormModal, event: any) {
+function handleSubmit(i: ModActionFormModal, event: any) {
   event.preventDefault();
   i.setState({ loading: true });
 
   if (i.isBanModal) {
-    await i.props.onSubmit({
+    i.props.onSubmit({
       reason: i.state.reason,
       daysUntilExpires: i.state.daysUntilExpire!,
       shouldRemoveOrRestoreData: i.state.shouldRemoveOrRestoreData!,
     } as BanUpdateForm & string); // Need to & string to handle type weirdness
   } else {
-    await i.props.onSubmit(i.state.reason);
+    i.props.onSubmit(i.state.reason as BanUpdateForm & string);
   }
 
   i.setState({
@@ -330,7 +338,7 @@ export default class ModActionFormModal extends Component<
             user: getApubName(this.props.creator),
             community: getApubName(
               this.props.community ?? {
-                actor_id: "",
+                ap_id: "",
                 name: "",
               },
             ),
@@ -375,6 +383,16 @@ export default class ModActionFormModal extends Component<
       case "report-message": {
         return I18NextService.i18n.t("report_message");
       }
+      case "lock-post": {
+        return I18NextService.i18n.t(
+          this.props.isLocked ? "unlock_post" : "lock_post",
+        );
+      }
+      case "lock-comment": {
+        return I18NextService.i18n.t(
+          this.props.isLocked ? "unlock_comment" : "lock_comment",
+        );
+      }
     }
   }
 
@@ -403,17 +421,31 @@ export default class ModActionFormModal extends Component<
       case "report-message": {
         return I18NextService.i18n.t("create_report");
       }
+      case "lock-post": {
+        return I18NextService.i18n.t(
+          this.props.isLocked ? "unlock_post" : "lock_post",
+        );
+      }
+      case "lock-comment": {
+        return I18NextService.i18n.t(
+          this.props.isLocked ? "unlock_comment" : "lock_comment",
+        );
+      }
     }
   }
 
   get loadingText() {
-    let translation: string;
+    let translation: NoOptionI18nKeys;
 
     switch (this.props.modActionType) {
       case "site-ban":
       case "community-ban": {
-        translation = this.props.isBanned ? "unbanning" : "banning";
-        break;
+        return I18NextService.i18n.t(
+          this.props.isBanned ? "unbanning" : "banning",
+          {
+            user: getApubName(this.props.creator),
+          },
+        );
       }
 
       case "purge-post":
@@ -433,6 +465,12 @@ export default class ModActionFormModal extends Component<
       case "report-comment":
       case "report-message": {
         translation = "creating_report";
+        break;
+      }
+
+      case "lock-post":
+      case "lock-comment": {
+        translation = this.props.isLocked ? "unlocking" : "locking";
         break;
       }
     }

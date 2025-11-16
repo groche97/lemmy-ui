@@ -1,11 +1,10 @@
-import { initializeSite } from "@utils/app";
 import { hydrate } from "inferno-hydrate";
 import { BrowserRouter } from "inferno-router";
 import App from "../shared/components/app/app";
-import { lazyHighlightjs } from "../shared/lazy-highlightjs";
-import { loadUserLanguage } from "../shared/services/I18NextService";
-import { verifyDynamicImports } from "../shared/dynamic-imports";
-import { setupEmojiDataModel } from "../shared/markdown";
+import { lazyHighlightjs } from "@utils/lazy-highlightjs";
+import { loadLanguageInstances } from "@services/I18NextService";
+import { verifyDynamicImports } from "@utils/dynamic-imports";
+import { setupMarkdown } from "@utils/markdown";
 
 import "bootstrap/js/dist/collapse";
 import "bootstrap/js/dist/dropdown";
@@ -14,20 +13,26 @@ import "bootstrap/js/dist/modal";
 async function startClient() {
   // Allows to test imports from the browser console.
   window.checkLazyScripts = () => {
-    verifyDynamicImports(true).then(x => console.log(x));
+    verifyDynamicImports(true).then(x => console.debug(x));
   };
 
   window.history.scrollRestoration = "manual";
 
-  initializeSite(window.isoData.site_res);
-
+  setupMarkdown();
   lazyHighlightjs.enableLazyLoading();
 
-  await Promise.all([loadUserLanguage(), setupEmojiDataModel()]);
+  const fallbackLanguages = window.navigator.languages;
+  const interfaceLanguage =
+    window.isoData?.myUserInfo?.local_user_view.local_user.interface_language;
+
+  // Make sure the language is loaded before hydration.
+  const [[dateFnsLocale, i18n]] = await Promise.all([
+    loadLanguageInstances(fallbackLanguages, interfaceLanguage),
+  ]);
 
   const wrapper = (
     <BrowserRouter>
-      <App />
+      <App dateFnsLocale={dateFnsLocale} i18n={i18n} />
     </BrowserRouter>
   );
 

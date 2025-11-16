@@ -1,7 +1,7 @@
 import { Component } from "inferno";
 import { Post } from "lemmy-js-client";
 import * as sanitizeHtml from "sanitize-html";
-import { relTags } from "../../config";
+import { relTags } from "@utils/config";
 import { Icon } from "../common/icon";
 
 interface MetadataCardProps {
@@ -18,7 +18,7 @@ export class MetadataCard extends Component<MetadataCardProps> {
 
     if (post.embed_title && post.url) {
       return (
-        <div className="post-metadata-card card border-secondary mt-3 mb-2">
+        <div className="post-metadata-card card mt-3 mb-2">
           <div className="row">
             <div className="col-12">
               <div className="card-body">
