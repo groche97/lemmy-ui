@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Get the version
         id: get_version
-        run: echo ::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)
+        run: echo {VERSION}={$(echo $GITHUB_REF | cut -d / -f 3)} >> $GITHUB_OUTPUT
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,7 +42,7 @@ jobs:
       - name: Show hash  
         run: sha512sum lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
       - name: Generate hash file
-        run: sha512sum lemmy-ui-$GIT_TAG_NAME.tar > lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar.sha512
+        run: sha512sum lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar > lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar.sha512
         
       - name: Release
         uses: softprops/action-gh-release@v2
