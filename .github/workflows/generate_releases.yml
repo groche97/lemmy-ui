@@ -34,9 +34,15 @@ jobs:
         run: pnpm build:prod
       
       - name: Create artifact
-        run: tar -c ./* -f lemmy-ui.tar
+        run: tar -c ./* -f lemmy-ui-$GIT_TAG_NAME.tar
+      - name: Show hash  
+        run: sha512sum lemmy-ui-$GIT_TAG_NAME.tar
+      - name: Generate hash file
+        run: sha512sum lemmy-ui-$GIT_TAG_NAME.tar > lemmy-ui-$GIT_TAG_NAME.tar.sha512
         
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: lemmy-ui.tar
+          files: 
+            - lemmy-ui-$GIT_TAG_NAME.tar
+            - lemmy-ui-$GIT_TAG_NAME.tar.sha512
