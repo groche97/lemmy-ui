@@ -12,6 +12,9 @@ jobs:
         id: get_version
         run: echo "{VERSION}={$(echo $GITHUB_REF | cut -d / -f 3)}" >> $GITHUB_OUTPUT
 
+      - name: Test version
+        run: echo $GITHUB_REF | cut -d / -f 3)
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
