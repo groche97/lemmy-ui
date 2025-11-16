@@ -12,12 +12,6 @@ jobs:
         id: get_version
         run: echo "VERSION=$(echo $GITHUB_REF | cut -d / -f 3)" >> $GITHUB_OUTPUT
 
-      - name: Test version 1
-        run: export tag_name=$(echo $GITHUB_REF | cut -d / -f 3)
-
-      - name: Test version 2
-        run: echo $tag_name 
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -36,10 +30,7 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-      - name: Show translations
-        run: ls lemmy-translations
-      - name: Test ls
-        run: ls src
+      
       - name: Build
         run: pnpm build:prod
       
