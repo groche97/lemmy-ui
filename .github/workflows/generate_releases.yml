@@ -8,6 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Get the version
+        id: get_version
+        run: echo ::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -34,15 +38,15 @@ jobs:
         run: pnpm build:prod
       
       - name: Create artifact
-        run: tar -c ./* -f lemmy-ui-$GIT_TAG_NAME.tar
+        run: tar -c ./* -f lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
       - name: Show hash  
-        run: sha512sum lemmy-ui-$GIT_TAG_NAME.tar
+        run: sha512sum lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
       - name: Generate hash file
-        run: sha512sum lemmy-ui-$GIT_TAG_NAME.tar > lemmy-ui-$GIT_TAG_NAME.tar.sha512
+        run: sha512sum lemmy-ui-$GIT_TAG_NAME.tar > lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar.sha512
         
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            lemmy-ui-$GIT_TAG_NAME.tar
-            lemmy-ui-$GIT_TAG_NAME.tar.sha512
+            lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
+            lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar.sha512
