@@ -4,6 +4,7 @@ on:
       - "*.*.*"
 
 jobs:
+
   cache-and-install:
     runs-on: ubuntu-latest
 
@@ -35,7 +36,7 @@ jobs:
         run: pnpm build:prod
       
       - name: Create artifact
-        run: tar -c ./* -f lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
+        run: tar -c --exclude='./.git' --exclude='./lemmy-translations/.git' -c ./* -f lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
       - name: Show hash  
         run: sha512sum lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
       - name: Generate hash file
