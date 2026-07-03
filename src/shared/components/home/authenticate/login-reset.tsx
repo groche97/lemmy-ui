@@ -1,12 +1,13 @@
 import { setIsoData } from "@utils/app";
 import { capitalizeFirstLetter, validEmail } from "@utils/helpers";
-import { Component, linkEvent } from "inferno";
-import { HttpService, I18NextService } from "../../services";
+import { Component, FormEvent, InfernoMouseEvent } from "inferno";
+import { I18NextService } from "@services/I18NextService";
+import { HttpService } from "@services/HttpService";
 import { toast } from "@utils/app";
-import { HtmlTags } from "../common/html-tags";
-import { Spinner } from "../common/icon";
-import { simpleScrollMixin } from "../mixins/scroll-mixin";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { HtmlTags } from "../../common/html-tags";
+import { Spinner } from "../../common/icon";
+import { simpleScrollMixin } from "../../mixins/scroll-mixin";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 
 interface State {
   form: {
@@ -29,10 +30,6 @@ export class LoginReset extends Component<
     },
   };
 
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
   get documentTitle(): string {
     return `${capitalizeFirstLetter(
       I18NextService.i18n.t("forgot_password"),
@@ -44,7 +41,7 @@ export class LoginReset extends Component<
       <div className="container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         <div className="col-12 col-lg-6 col-md-8 m-auto">
           {this.loginResetForm()}
@@ -55,7 +52,7 @@ export class LoginReset extends Component<
 
   loginResetForm() {
     return (
-      <form onSubmit={linkEvent(this, this.handlePasswordReset)}>
+      <form onSubmit={event => this.handlePasswordReset(this, event)}>
         <h1 className="h4 mb-4">
           {capitalizeFirstLetter(I18NextService.i18n.t("forgot_password"))}
         </h1>
@@ -80,7 +77,7 @@ export class LoginReset extends Component<
               className="form-control"
               id="login-reset-email"
               value={this.state.form.email}
-              onInput={linkEvent(this, this.handleEmailInputChange)}
+              onInput={event => this.handleEmailInputChange(this, event)}
               autoComplete="email"
               required
               minLength={3}
@@ -92,8 +89,8 @@ export class LoginReset extends Component<
           <div className="col-sm-10">
             <button
               type="button"
-              onClick={linkEvent(this, this.handlePasswordReset)}
-              className="btn btn-secondary"
+              onClick={event => this.handlePasswordReset(this, event)}
+              className="btn btn-light border-light-subtle"
               disabled={
                 !validEmail(this.state.form.email) || this.state.form.loading
               }
@@ -110,11 +107,14 @@ export class LoginReset extends Component<
     );
   }
 
-  handleEmailInputChange(i: LoginReset, event: any) {
+  handleEmailInputChange(i: LoginReset, event: FormEvent<HTMLInputElement>) {
     i.setState(s => ((s.form.email = event.target.value.trim()), s));
   }
 
-  async handlePasswordReset(i: LoginReset, event: any) {
+  async handlePasswordReset(
+    i: LoginReset,
+    event: InfernoMouseEvent<HTMLButtonElement> | FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
 
     const email = i.state.form.email;
@@ -122,11 +122,12 @@ export class LoginReset extends Component<
     if (email && validEmail(email)) {
       i.setState(s => ((s.form.loading = true), s));
 
-      const res = await HttpService.client.passwordReset({ email });
+      const res = await HttpService.client.resetPassword({ email });
 
       if (res.state === "success") {
         toast(I18NextService.i18n.t("reset_password_mail_sent"));
-        i.context.router.history.push("/login");
+        const context = i.context as RouterContext;
+        context.router.history.push("/login");
       }
 
       i.setState(s => ((s.form.loading = false), s));

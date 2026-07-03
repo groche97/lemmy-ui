@@ -1,7 +1,7 @@
 import { Icon } from "@components/common/icon";
 import { PictrsImage } from "@components/common/pictrs-image";
 import { I18NextService } from "@services/index";
-import { hideAnimatedImage, hideImages, linkTarget } from "@utils/app";
+import { hideAnimatedImage, linkTarget, showMedia } from "@utils/app";
 import { relTags } from "@utils/config";
 import { isImage, isVideo } from "@utils/media";
 import classNames from "classnames";
@@ -17,7 +17,7 @@ export function PostThumbnail({ postView, hideImage, myUserInfo }: Props) {
   const post = postView.post;
   const url = post.url;
   const thumbnail = post.thumbnail_url;
-  const hideImages_ = hideImages(hideImage, myUserInfo);
+  const hideImages_ = hideImage || !showMedia(myUserInfo);
 
   if (
     !hideImages_ &&
@@ -27,20 +27,14 @@ export function PostThumbnail({ postView, hideImage, myUserInfo }: Props) {
     thumbnail
   ) {
     return (
-      <a
-        className="d-block position-relative"
-        href={url}
-        rel={relTags}
-        title={url}
-        target={linkTarget(myUserInfo)}
-      >
-        <ImgThumb postView={postView} />
+      <div className="d-block position-relative">
+        <ImgThumb postView={postView} viewer />
         <Icon
           icon="image"
           small
           classes="d-block text-white position-absolute end-0 top-0 mini-overlay text-opacity-75 text-opacity-100-hover"
         />
-      </a>
+      </div>
     );
   } else if (
     !hideImages_ &&
@@ -112,9 +106,10 @@ export function PostThumbnail({ postView, hideImage, myUserInfo }: Props) {
       );
     }
   } else {
+    // Don't show on screens smaller than md
     return (
       <Link
-        className="text-body"
+        className="text-body d-none d-md-block"
         to={`/post/${post.id}`}
         title={I18NextService.i18n.t("comments")}
         target={linkTarget(myUserInfo)}
@@ -133,18 +128,20 @@ export function PostThumbnail({ postView, hideImage, myUserInfo }: Props) {
 
 type ImgThumbProps = {
   postView: PostView;
+  viewer?: boolean;
 };
 /**
  * Renders a thumbnail only if one exists
  **/
-function ImgThumb({ postView }: ImgThumbProps) {
+function ImgThumb({ postView, viewer }: ImgThumbProps) {
   return postView.post.thumbnail_url ? (
     <PictrsImage
       src={postView.post.thumbnail_url}
-      thumbnail
+      type="thumbnail"
       alt={postView.post.alt_text}
       imageDetails={postView.image_details}
       nsfw={postView.post.nsfw || postView.community.nsfw}
+      viewer={viewer}
     />
   ) : (
     <></>

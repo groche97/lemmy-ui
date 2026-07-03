@@ -3,26 +3,25 @@ import {
   commentToFlatNode,
   communityToChoice,
   enableNsfw,
-  fetchCommunities,
-  fetchUsers,
+  handleWarnComment,
+  handleWarnPost,
   personToChoice,
+  searchCommunities,
+  searchUsers,
   setIsoData,
   showLocal,
 } from "@utils/app";
 import { scrollMixin } from "./mixins/scroll-mixin";
 import {
-  capitalizeFirstLetter,
   debounce,
-  dedupByProperty,
   getIdFromString,
   getQueryParams,
   getQueryString,
   resourcesSettled,
-  cursorComponents,
 } from "@utils/helpers";
-import type { DirectionalCursor, IsoData, QueryParams } from "@utils/types";
+import type { IsoData, QueryParams } from "@utils/types";
 import { Choice, RouteDataResponse } from "@utils/types";
-import { Component, linkEvent, createRef } from "inferno";
+import { Component, createRef, FormEvent, InfernoNode } from "inferno";
 import {
   CommunityView,
   GetCommunity,
@@ -31,18 +30,18 @@ import {
   GetPersonDetailsResponse,
   GetSiteResponse,
   LemmyHttp,
-  ListCommunitiesResponse,
+  PagedResponse,
   ListingType,
   PersonView,
   PostView,
   Search as SearchForm,
   SearchResponse,
   SearchType,
-  SearchSortType,
   PaginationCursor,
   MyUserInfo,
   CommentView,
   MultiCommunityView,
+  CommunitySortType,
 } from "lemmy-js-client";
 import { fetchLimit } from "@utils/config";
 import { InitialFetchRequest } from "@utils/types";
@@ -56,42 +55,41 @@ import {
 } from "../services/HttpService";
 import { CommentNodes } from "./comment/comment-nodes";
 import { HtmlTags } from "./common/html-tags";
-import { Spinner } from "./common/icon";
-import { ListingTypeSelect } from "./common/listing-type-select";
+import { Icon, Spinner } from "./common/icon";
 import { PersonListing } from "./person/person-listing";
 import { PostListing } from "./post/post-listing";
 import { getHttpBaseInternal } from "../utils/env";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { isBrowser } from "@utils/browser";
-import { PaginatorCursor } from "./common/paginator-cursor";
-import { SearchSortSelect } from "./common/sort-select";
-import { SearchableSelect } from "./common/searchable-select";
 import { UserBadges } from "./common/user-badges";
 import { CommunityBadges, MultiCommunityBadges } from "./common/badges";
 import { CommunityLink } from "./community/community-link";
 import { MultiCommunityLink } from "./multi-community/multi-community-link";
+import { Action } from "history";
+import { ListingTypeDropdown } from "./common/listing-type-dropdown";
+import { SearchTypeDropdown } from "./common/search-type-dropdown";
+import { FilterChipCheckbox } from "./common/filter-chip-checkbox";
+import { NoOptionI18nKeys } from "i18next";
+import { FilterChipSelect } from "./common/filter-chip-select";
 
 interface SearchProps {
   q?: string;
   type: SearchType;
-  sort: SearchSortType;
   listingType: ListingType;
   titleOnly: boolean;
   postUrlOnly: boolean;
   communityId?: number;
   creatorId?: number;
-  cursor?: DirectionalCursor;
+  cursor?: PaginationCursor;
 }
 
 type SearchData = RouteDataResponse<{
   communityResponse: GetCommunityResponse;
-  listCommunitiesResponse: ListCommunitiesResponse;
+  listCommunitiesResponse: PagedResponse<CommunityView>;
   creatorDetailsResponse: GetPersonDetailsResponse;
   searchResponse: SearchResponse;
 }>;
-
-type FilterType = "creator" | "community";
 
 interface SearchState {
   searchRes: RequestState<SearchResponse>;
@@ -103,26 +101,15 @@ interface SearchState {
   isIsomorphic: boolean;
 }
 
-const defaultSearchType = "all";
-const defaultSearchSortType = "top";
-const defaultListingType = "all";
-const defaultCommunitySortType = "hot";
-
-const searchTypes = [
-  "all",
-  "comments",
-  "posts",
-  "communities",
-  "users",
-  "multi_communities",
-];
+const defaultSearchType: SearchType = "all";
+const defaultListingType: ListingType = "all";
+const defaultCommunitySortType: CommunitySortType = "hot";
 
 export function getSearchQueryParams(source?: string): SearchProps {
   return getQueryParams<SearchProps>(
     {
       q: getSearchQueryFromQuery,
       type: getSearchTypeFromQuery,
-      sort: getSortTypeFromQuery,
       listingType: getListingTypeFromQuery,
       titleOnly: getTitleOnlyFromQuery,
       postUrlOnly: getPostUrlOnlyFromQuery,
@@ -140,10 +127,6 @@ function getSearchTypeFromQuery(type_?: string): SearchType {
   return type_ ? (type_ as SearchType) : defaultSearchType;
 }
 
-function getSortTypeFromQuery(sort?: string): SearchSortType {
-  return sort ? (sort as SearchSortType) : defaultSearchSortType;
-}
-
 function getListingTypeFromQuery(listingType?: string): ListingType {
   return listingType ? (listingType as ListingType) : defaultListingType;
 }
@@ -155,53 +138,46 @@ const getPostUrlOnlyFromQuery = (postUrlOnly?: string): boolean =>
   postUrlOnly?.toLowerCase() === "true";
 
 const Filter = ({
-  filterType,
+  title,
   options,
   onChange,
   onSearch,
   value,
-  loading,
 }: {
-  filterType: FilterType;
+  title: NoOptionI18nKeys;
   options: Choice[];
   onSearch: (text: string) => void;
-  onChange: (choice: Choice) => void;
+  onChange: (choices: Choice[]) => void;
   value?: number | null;
-  loading: boolean;
 }) => {
   return (
-    <div className="col-sm-6">
-      <label className="mb-1" htmlFor={`${filterType}-filter`}>
-        {capitalizeFirstLetter(I18NextService.i18n.t(filterType))}
-      </label>
-      <SearchableSelect
-        id={`${filterType}-filter`}
-        options={[
-          {
-            label: I18NextService.i18n.t("all") as string,
-            value: "0",
-          },
-        ].concat(dedupByProperty(options, option => option.value))}
-        value={value ?? 0}
-        onSearch={onSearch}
-        onChange={onChange}
-        loading={loading}
-      />
-    </div>
+    <FilterChipSelect
+      label={title}
+      multiple={false}
+      allOptions={options}
+      selectedOptions={value ? [value.toString()] : []}
+      onSearch={onSearch}
+      onSelect={onChange}
+    />
   );
 };
 
 const communityListing = (
   communities: CommunityView[],
   myUserInfo: MyUserInfo | undefined,
+  showHeader: boolean = true,
 ) => {
   return (
     communities.length > 0 && (
       <>
-        <h3>{I18NextService.i18n.t("communities")}</h3>
+        {showHeader && <h3>{I18NextService.i18n.t("communities")}</h3>}
         {communities.map(c => (
           <div>
-            <CommunityLink community={c.community} myUserInfo={myUserInfo} />
+            <CommunityLink
+              community={c.community}
+              myUserInfo={myUserInfo}
+              muted={false}
+            />
             <CommunityBadges
               className="ms-2 d-inline-flex"
               community={c.community}
@@ -218,11 +194,12 @@ const communityListing = (
 const multiCommunityListing = (
   multiCommunities: MultiCommunityView[],
   myUserInfo: MyUserInfo | undefined,
+  showHeader: boolean = true,
 ) => {
   return (
     multiCommunities.length > 0 && (
       <>
-        <h3>{I18NextService.i18n.t("multi_communities")}</h3>
+        {showHeader && <h3>{I18NextService.i18n.t("multi_communities")}</h3>}
         {multiCommunities.map(m => (
           <div>
             <MultiCommunityLink
@@ -245,11 +222,12 @@ const multiCommunityListing = (
 const personListing = (
   persons: PersonView[],
   myUserInfo: MyUserInfo | undefined,
+  showHeader: boolean = true,
 ) => {
   return (
     persons.length > 0 && (
       <>
-        <h3>{I18NextService.i18n.t("users")}</h3>
+        {showHeader && <h3>{I18NextService.i18n.t("users")}</h3>}
         {persons.map(p => (
           <div>
             <PersonListing
@@ -257,10 +235,10 @@ const personListing = (
               banned={p.banned}
               showApubName
               myUserInfo={myUserInfo}
+              muted={false}
             />
             <UserBadges
               classNames="ms-1"
-              isAdmin={p.is_admin}
               isBanned={p.banned}
               myUserInfo={myUserInfo}
               personActions={p.person_actions}
@@ -275,11 +253,15 @@ const personListing = (
   );
 };
 
-const postListing = (posts: PostView[], isoData: IsoData) => {
+const postListing = (
+  posts: PostView[],
+  isoData: IsoData,
+  showHeader: boolean = true,
+) => {
   return (
     posts.length > 0 && (
       <>
-        <h3>{I18NextService.i18n.t("posts")}</h3>
+        {showHeader && <h3>{I18NextService.i18n.t("posts")}</h3>}
         {posts.map(post_view => (
           <div>
             <PostListing
@@ -296,19 +278,28 @@ const postListing = (posts: PostView[], isoData: IsoData) => {
               admins={isoData.siteRes.admins}
               postListingMode="list"
               viewOnly
+              topBorder={false}
               crossPosts={[]}
+              communityTags={[]}
               showBody={"hidden"}
               hideImage={false}
-              markable={false}
+              showMarkRead="hide"
               disableAutoMarkAsRead={false}
               editLoading={false}
+              markReadLoading={false}
+              voteLoading={false}
+              mutePersonName={false}
+              muteCommunityName
+              hideAvatar={false}
               // All of these are unused, since its view only
-              onPostEdit={() => EMPTY_REQUEST}
-              onPostVote={() => EMPTY_REQUEST}
+              onPostEdit={() => {}}
+              onPostModEdit={() => {}}
+              onPostVote={() => {}}
               onPostReport={() => {}}
               onBlockPerson={() => {}}
               onBlockCommunity={() => {}}
               onLockPost={() => {}}
+              onWarnPost={form => handleWarnPost(form)}
               onDeletePost={() => {}}
               onRemovePost={() => {}}
               onSavePost={() => {}}
@@ -333,20 +324,35 @@ const postListing = (posts: PostView[], isoData: IsoData) => {
   );
 };
 
-const commentListing = (comments: CommentView[], isoData: IsoData) => {
+const commentListing = (
+  comments: CommentView[],
+  isoData: IsoData,
+  showHeader: boolean = true,
+) => {
   return (
     comments.length > 0 && (
       <>
-        <h3>{I18NextService.i18n.t("comments")}</h3>
+        {showHeader && <h3>{I18NextService.i18n.t("comments")}</h3>}
         {comments.map(c => (
           <div>
             <CommentNodes
               key={c.comment.id}
               nodes={[commentToFlatNode(c)]}
               viewType={"flat"}
+              showMarkRead={"hide"}
+              showBadgeForPostCreator={false}
+              mutePersonName={false}
+              muteCommunityName
+              hideAvatar={false}
+              createLoading={undefined}
+              editLoading={undefined}
+              markReadLoading={undefined}
+              fetchChildrenLoading={undefined}
+              voteLoading={undefined}
               viewOnly
               postLockedOrRemovedOrDeleted
               isTopLevel
+              noBorder
               showCommunity
               myUserInfo={isoData.myUserInfo}
               localSite={isoData.siteRes.site_view.local_site}
@@ -356,25 +362,28 @@ const commentListing = (comments: CommentView[], isoData: IsoData) => {
               showContext={false}
               hideImages={false}
               // All of these are unused, since its viewonly
-              onSaveComment={async () => {}}
-              onBlockPerson={async () => {}}
-              onBlockCommunity={async () => {}}
-              onDeleteComment={async () => {}}
-              onRemoveComment={async () => {}}
-              onCommentVote={async () => {}}
-              onCommentReport={async () => {}}
-              onDistinguishComment={async () => {}}
-              onAddModToCommunity={async () => {}}
-              onAddAdmin={async () => {}}
-              onTransferCommunity={async () => {}}
-              onPurgeComment={async () => {}}
-              onPurgePerson={async () => {}}
-              onBanPersonFromCommunity={async () => {}}
-              onBanPerson={async () => {}}
-              onCreateComment={async () => EMPTY_REQUEST}
-              onEditComment={async () => EMPTY_REQUEST}
-              onPersonNote={async () => {}}
-              onLockComment={async () => {}}
+              onSaveComment={() => {}}
+              onBlockPerson={() => {}}
+              onBlockCommunity={() => {}}
+              onDeleteComment={() => {}}
+              onRemoveComment={() => {}}
+              onCommentVote={() => {}}
+              onCommentReport={() => {}}
+              onDistinguishComment={() => {}}
+              onAddModToCommunity={() => {}}
+              onAddAdmin={() => {}}
+              onTransferCommunity={() => {}}
+              onPurgeComment={() => {}}
+              onPurgePerson={() => {}}
+              onBanPersonFromCommunity={() => {}}
+              onBanPerson={() => {}}
+              onCreateComment={() => {}}
+              onEditComment={() => {}}
+              onPersonNote={() => {}}
+              onLockComment={() => {}}
+              onWarnComment={form => handleWarnComment(form)}
+              onMarkRead={() => {}}
+              onFetchChildren={() => {}}
             />
           </div>
         ))}
@@ -411,15 +420,8 @@ export class Search extends Component<SearchRouteProps, SearchState> {
     return resourcesSettled([this.state.searchRes]);
   }
 
-  constructor(props: SearchRouteProps, context: any) {
+  constructor(props: SearchRouteProps, context: object) {
     super(props, context);
-
-    this.handleSortChange = this.handleSortChange.bind(this);
-    this.handleListingTypeChange = this.handleListingTypeChange.bind(this);
-    this.handlePageChange = this.handlePageChange.bind(this);
-    this.handleCommunityFilterChange =
-      this.handleCommunityFilterChange.bind(this);
-    this.handleCreatorFilterChange = this.handleCreatorFilterChange.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -441,7 +443,7 @@ export class Search extends Component<SearchRouteProps, SearchState> {
 
       if (communitiesRes?.state === "success") {
         this.state.communitySearchOptions =
-          communitiesRes.data.communities.map(communityToChoice);
+          communitiesRes.data.items.map(communityToChoice);
       }
 
       if (communityRes?.state === "success") {
@@ -456,35 +458,26 @@ export class Search extends Component<SearchRouteProps, SearchState> {
     }
   }
 
-  componentWillMount() {
+  async componentWillMount() {
     if (!this.state.isIsomorphic && isBrowser()) {
-      this.fetchAll(this.props);
+      await this.fetchAll(this.props);
     }
   }
 
   componentDidMount() {
-    if (this.props.history.action !== "POP" || this.state.isIsomorphic) {
+    if (this.props.history.action !== Action.Pop || this.state.isIsomorphic) {
       this.searchInput.current?.select();
     }
   }
 
-  componentWillReceiveProps(nextProps: SearchRouteProps) {
+  async componentWillReceiveProps(nextProps: SearchRouteProps) {
     if (nextProps.communityId !== this.props.communityId) {
-      this.fetchSelectedCommunity(nextProps);
+      await this.fetchSelectedCommunity(nextProps);
     }
     if (nextProps.creatorId !== this.props.creatorId) {
-      this.fetchSelectedCreator(nextProps);
+      await this.fetchSelectedCreator(nextProps);
     }
-    this.search(nextProps);
-  }
-
-  componentDidUpdate(prevProps: SearchRouteProps) {
-    if (
-      this.props.location.key !== prevProps.location.key &&
-      this.props.history.action !== "POP"
-    ) {
-      this.searchInput.current?.select();
-    }
+    await this.search(nextProps);
   }
 
   fetchDefaultCommunitiesToken?: symbol;
@@ -508,11 +501,11 @@ export class Search extends Component<SearchRouteProps, SearchState> {
 
     if (res.state === "success") {
       const retainSelected: false | undefined | Choice =
-        !res.data.communities.some(cv => cv.community.id === communityId) &&
+        !res.data.items.some(cv => cv.community.id === communityId) &&
         this.state.communitySearchOptions.find(
           choice => choice.value === communityId?.toString(),
         );
-      const choices = res.data.communities.map(communityToChoice);
+      const choices = res.data.items.map(communityToChoice);
       this.setState({
         communitySearchOptions: retainSelected
           ? [retainSelected, ...choices]
@@ -595,20 +588,23 @@ export class Search extends Component<SearchRouteProps, SearchState> {
     ]);
   }
 
-  static async fetchInitialData({
+  static test: (t: boolean) => 52;
+
+  static fetchInitialData = async ({
     headers,
     query: {
       q: query,
       type: searchType,
-      sort,
       listingType: listing_type,
       titleOnly: title_only,
       postUrlOnly: post_url_only,
       communityId: community_id,
       creatorId: creator_id,
-      cursor,
     },
-  }: InitialFetchRequest<SearchPathProps, SearchProps>): Promise<SearchData> {
+  }: InitialFetchRequest<
+    SearchPathProps,
+    SearchProps
+  >): Promise<SearchData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -641,16 +637,14 @@ export class Search extends Component<SearchRouteProps, SearchState> {
 
     if (query) {
       const form: SearchForm = {
-        q: query,
+        search_term: query,
         community_id,
         creator_id,
         type_: searchType,
-        sort,
         listing_type,
         title_only,
         post_url_only,
         limit: fetchLimit,
-        ...cursorComponents(cursor),
       };
 
       searchResponse = await client.search(form);
@@ -662,12 +656,7 @@ export class Search extends Component<SearchRouteProps, SearchState> {
       listCommunitiesResponse,
       searchResponse,
     };
-  }
-
-  get getNextPage(): PaginationCursor | undefined {
-    const { searchRes: res } = this.state;
-    return res.state === "success" ? res.data.next_page : undefined;
-  }
+  };
 
   get documentTitle(): string {
     const { q } = this.props;
@@ -682,27 +671,42 @@ export class Search extends Component<SearchRouteProps, SearchState> {
       <div className="search container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
-          canonicalPath={
-            this.context.router.route.match.url +
-            this.context.router.route.location.search
-          }
+          context={this.context as RouterContext}
         />
         <h1 className="h4 mb-4">{I18NextService.i18n.t("search")}</h1>
         {this.selects}
         {this.searchForm}
+        {this.displayResolve()}
         {this.displayResults(type)}
         {this.resultsCount === 0 &&
           this.state.searchRes.state === "success" && (
             <span>{I18NextService.i18n.t("no_results")}</span>
           )}
-        <PaginatorCursor
-          current={this.props.cursor}
-          resource={this.state.searchRes}
-          onPageChange={this.handlePageChange}
-        />
       </div>
     );
+  }
+
+  displayResolve(): InfernoNode | void {
+    const { searchRes: searchResponse } = this.state;
+    if (searchResponse.state === "success" && searchResponse.data.resolve) {
+      const resolve = searchResponse.data.resolve;
+      switch (resolve.type_) {
+        case "post":
+          return postListing([resolve], this.isoData, false);
+        case "comment":
+          return commentListing([resolve], this.isoData, false);
+        case "community":
+          return communityListing([resolve], this.isoData.myUserInfo, false);
+        case "person":
+          return personListing([resolve], this.isoData.myUserInfo, false);
+        case "multi_community":
+          return multiCommunityListing(
+            [resolve],
+            this.isoData.myUserInfo,
+            false,
+          );
+      }
+    }
   }
 
   displayResults(type: SearchType) {
@@ -723,16 +727,17 @@ export class Search extends Component<SearchRouteProps, SearchState> {
   }
 
   get searchForm() {
+    const context = this.context as RouterContext;
     return (
       <form
         className="row gx-2 gy-3"
-        onSubmit={linkEvent(this, this.handleSearchSubmit)}
+        onSubmit={e => handleSearchSubmit(this, e)}
       >
         <div className="col-auto flex-grow-1 flex-sm-grow-0">
           {/* key is necessary for defaultValue to update when props.q changes,
               e.g. back button. */}
           <input
-            key={this.context.router.history.location.key}
+            key={context.router.history.location.key}
             type="text"
             className="form-control me-2 mb-2 col-sm-8"
             defaultValue={this.props.q ?? ""}
@@ -744,11 +749,14 @@ export class Search extends Component<SearchRouteProps, SearchState> {
           />
         </div>
         <div className="col-auto">
-          <button type="submit" className="btn btn-secondary mb-2">
+          <button
+            type="submit"
+            className="btn btn-light border-light-subtle mb-2"
+          >
             {this.state.searchRes.state === "loading" ? (
               <Spinner />
             ) : (
-              <span>{I18NextService.i18n.t("search")}</span>
+              <Icon icon="search" />
             )}
           </button>
         </div>
@@ -762,98 +770,70 @@ export class Search extends Component<SearchRouteProps, SearchState> {
       listingType,
       titleOnly,
       postUrlOnly,
-      sort,
       communityId,
       creatorId,
     } = this.props;
-    const {
-      communitySearchOptions,
-      creatorSearchOptions,
-      searchCommunitiesLoading,
-      searchCreatorLoading,
-    } = this.state;
+    const { communitySearchOptions, creatorSearchOptions } = this.state;
 
     return (
       <>
-        <div className="row row-cols-auto g-2 g-sm-3 mb-2 mb-sm-3">
+        <div className="row row-cols-auto align-items-center g-2 g-sm-3 mb-2 mb-sm-3">
           <div className="col">
-            <select
-              value={type}
-              onChange={linkEvent(this, this.handleTypeChange)}
-              className="form-select d-inline-block w-auto"
-              aria-label={I18NextService.i18n.t("type")}
-            >
-              <option disabled aria-hidden="true">
-                {I18NextService.i18n.t("type")}
-              </option>
-              {searchTypes.map((option: SearchType) => (
-                <option value={option} key={option}>
-                  {I18NextService.i18n.t(option.toLowerCase())}
-                </option>
-              ))}
-            </select>
+            <SearchTypeDropdown
+              currentOption={type}
+              onSelect={val => handleTypeChange(this, val)}
+            />
           </div>
           <div className="col">
-            <ListingTypeSelect
-              type_={listingType}
+            <ListingTypeDropdown
+              currentOption={listingType}
               showLocal={showLocal(this.isoData)}
               showSubscribed
-              onChange={this.handleListingTypeChange}
+              showSuggested={
+                !!this.isoData.siteRes.site_view.local_site
+                  .suggested_multi_community_id
+              }
+              onSelect={type => handleListingTypeChange(this, type)}
               myUserInfo={this.isoData.myUserInfo}
+              showLabel
             />
           </div>
           {(type === "all" || type === "posts") && (
             <>
               <div className="col">
-                <input
-                  className="btn-check"
-                  id="title-only"
-                  type="checkbox"
-                  checked={titleOnly}
-                  onChange={linkEvent(this, this.handleTitleOnlyChange)}
+                <FilterChipCheckbox
+                  option={"post_title_only"}
+                  isChecked={titleOnly}
+                  onCheck={val => handleTitleOnlyChange(this, val)}
                 />
-                <label
-                  className="btn btn-outline-secondary"
-                  htmlFor="title-only"
-                >
-                  {I18NextService.i18n.t("post_title_only")}
-                </label>
               </div>
               <div className="col">
-                <input
-                  className="btn-check"
-                  id="url-only"
-                  type="checkbox"
-                  checked={postUrlOnly}
-                  onChange={linkEvent(this, this.handlePostUrlOnlyChange)}
+                <FilterChipCheckbox
+                  option={"post_url_only"}
+                  isChecked={postUrlOnly}
+                  onCheck={val => handlePostUrlOnlyChange(this, val)}
                 />
-                <label className="btn btn-outline-secondary" htmlFor="url-only">
-                  {I18NextService.i18n.t("post_url_only")}
-                </label>
               </div>
             </>
           )}
           <div className="col">
-            <SearchSortSelect current={sort} onChange={this.handleSortChange} />
+            <Filter
+              title="all_communities"
+              onChange={choices => handleCommunityFilterChange(this, choices)}
+              onSearch={text => handleCommunitySearch(this, text)}
+              options={communitySearchOptions}
+              value={communityId}
+            />
           </div>
-        </div>
-        <div className="row gy-2 gx-4 mb-3">
-          <Filter
-            filterType="community"
-            onChange={this.handleCommunityFilterChange}
-            onSearch={this.handleCommunitySearch}
-            options={communitySearchOptions}
-            value={communityId}
-            loading={searchCommunitiesLoading}
-          />
-          <Filter
-            filterType="creator"
-            onChange={this.handleCreatorFilterChange}
-            onSearch={this.handleCreatorSearch}
-            options={creatorSearchOptions}
-            value={creatorId}
-            loading={searchCreatorLoading}
-          />
+          <div className="col">
+            <Filter
+              title="all_creators"
+              onChange={choices => handleCreatorFilterChange(this, choices)}
+              onSearch={text => handleCreatorSearch(this, text)}
+              options={creatorSearchOptions}
+              value={creatorId}
+            />
+          </div>
         </div>
       </>
     );
@@ -861,62 +841,50 @@ export class Search extends Component<SearchRouteProps, SearchState> {
 
   get all() {
     const { searchRes: searchResponse } = this.state;
-    const comments_array: CommentView[] = [];
-    const posts_array: PostView[] = [];
-    const communities_array: CommunityView[] = [];
-    const persons_array: PersonView[] = [];
-    const multi_communities_array: MultiCommunityView[] = [];
     if (searchResponse.state === "success") {
-      searchResponse.data.results.forEach(sr => {
-        switch (sr.type_) {
-          case "post":
-            posts_array.push(sr);
-            break;
-          case "comment":
-            comments_array.push(sr);
-            break;
-          case "community":
-            communities_array.push(sr);
-            break;
-          case "person":
-            persons_array.push(sr);
-            break;
-          case "multi_community":
-            multi_communities_array.push(sr);
-            break;
-        }
-      });
+      return (
+        <>
+          {communityListing(
+            searchResponse.data.communities,
+            this.isoData.myUserInfo,
+          )}
+          {multiCommunityListing(
+            searchResponse.data.multi_communities,
+            this.isoData.myUserInfo,
+          )}
+          {personListing(searchResponse.data.persons, this.isoData.myUserInfo)}
+          {postListing(searchResponse.data.posts, this.isoData)}
+          {commentListing(searchResponse.data.comments, this.isoData)}
+        </>
+      );
+    } else {
+      return <></>;
     }
-
-    return (
-      <>
-        {communityListing(communities_array, this.isoData.myUserInfo)}
-        {multiCommunityListing(
-          multi_communities_array,
-          this.isoData.myUserInfo,
-        )}
-        {personListing(persons_array, this.isoData.myUserInfo)}
-        {postListing(posts_array, this.isoData)}
-        {commentListing(comments_array, this.isoData)}
-      </>
-    );
   }
 
   get comments() {
     const { searchRes: searchResponse, siteRes } = this.state;
     const comments =
-      searchResponse.state === "success"
-        ? searchResponse.data.results.filter(s => s.type_ === "comment")
-        : [];
+      searchResponse.state === "success" ? searchResponse.data.comments : [];
 
     return (
       <CommentNodes
         nodes={commentsToFlatNodes(comments)}
         viewType={"flat"}
+        createLoading={undefined}
+        editLoading={undefined}
+        fetchChildrenLoading={undefined}
+        voteLoading={undefined}
         viewOnly
         postLockedOrRemovedOrDeleted
         isTopLevel
         showCommunity
+        showMarkRead={"hide"}
+        showBadgeForPostCreator={false}
+        mutePersonName={false}
+        muteCommunityName
+        hideAvatar={false}
+        markReadLoading={undefined}
         allLanguages={siteRes.all_languages}
         siteLanguages={siteRes.discussion_languages}
         myUserInfo={this.isoData.myUserInfo}
@@ -925,25 +893,28 @@ export class Search extends Component<SearchRouteProps, SearchState> {
         showContext={false}
         hideImages={false}
         // All of these are unused, since its viewonly
-        onSaveComment={async () => {}}
-        onBlockPerson={async () => {}}
-        onBlockCommunity={async () => {}}
-        onDeleteComment={async () => {}}
-        onRemoveComment={async () => {}}
-        onCommentVote={async () => {}}
-        onCommentReport={async () => {}}
-        onDistinguishComment={async () => {}}
-        onAddModToCommunity={async () => {}}
-        onAddAdmin={async () => {}}
-        onTransferCommunity={async () => {}}
-        onPurgeComment={async () => {}}
-        onPurgePerson={async () => {}}
-        onBanPersonFromCommunity={async () => {}}
-        onBanPerson={async () => {}}
-        onCreateComment={async () => EMPTY_REQUEST}
-        onEditComment={async () => EMPTY_REQUEST}
-        onPersonNote={async () => {}}
-        onLockComment={async () => {}}
+        onSaveComment={() => {}}
+        onBlockPerson={() => {}}
+        onBlockCommunity={() => {}}
+        onDeleteComment={() => {}}
+        onRemoveComment={() => {}}
+        onCommentVote={() => {}}
+        onCommentReport={() => {}}
+        onDistinguishComment={() => {}}
+        onAddModToCommunity={() => {}}
+        onAddAdmin={() => {}}
+        onTransferCommunity={() => {}}
+        onPurgeComment={() => {}}
+        onPurgePerson={() => {}}
+        onBanPersonFromCommunity={() => {}}
+        onBanPerson={() => {}}
+        onCreateComment={() => {}}
+        onEditComment={() => {}}
+        onPersonNote={() => {}}
+        onLockComment={() => {}}
+        onWarnComment={form => handleWarnComment(form)}
+        onMarkRead={() => {}}
+        onFetchChildren={() => {}}
       />
     );
   }
@@ -951,9 +922,7 @@ export class Search extends Component<SearchRouteProps, SearchState> {
   get posts() {
     const { searchRes: searchResponse, siteRes } = this.state;
     const posts =
-      searchResponse.state === "success"
-        ? searchResponse.data.results.filter(s => s.type_ === "post")
-        : [];
+      searchResponse.state === "success" ? searchResponse.data.posts : [];
 
     return (
       <>
@@ -969,23 +938,32 @@ export class Search extends Component<SearchRouteProps, SearchState> {
                 allLanguages={siteRes.all_languages}
                 siteLanguages={siteRes.discussion_languages}
                 viewOnly
+                topBorder={false}
                 myUserInfo={this.isoData.myUserInfo}
                 localSite={siteRes.site_view.local_site}
                 admins={this.isoData.siteRes.admins}
                 postListingMode="list"
                 showBody={"hidden"}
                 crossPosts={[]}
+                communityTags={[]}
                 hideImage={false}
-                markable={false}
+                showMarkRead="hide"
                 disableAutoMarkAsRead={false}
                 editLoading={false}
+                markReadLoading={false}
+                voteLoading={false}
+                mutePersonName={false}
+                muteCommunityName
+                hideAvatar={false}
                 // All of these are unused, since its view only
-                onPostEdit={() => EMPTY_REQUEST}
-                onPostVote={() => EMPTY_REQUEST}
+                onPostEdit={() => {}}
+                onPostModEdit={() => {}}
+                onPostVote={() => {}}
                 onPostReport={() => {}}
                 onBlockPerson={() => {}}
                 onBlockCommunity={() => {}}
                 onLockPost={() => {}}
+                onWarnPost={form => handleWarnPost(form)}
                 onDeletePost={() => {}}
                 onRemovePost={() => {}}
                 onSavePost={() => {}}
@@ -1012,9 +990,7 @@ export class Search extends Component<SearchRouteProps, SearchState> {
   get communities() {
     const { searchRes: searchResponse } = this.state;
     const communities =
-      searchResponse.state === "success"
-        ? searchResponse.data.results.filter(s => s.type_ === "community")
-        : [];
+      searchResponse.state === "success" ? searchResponse.data.communities : [];
 
     return (
       <>
@@ -1029,7 +1005,7 @@ export class Search extends Component<SearchRouteProps, SearchState> {
     const { searchRes: searchResponse } = this.state;
     const multiCommunities =
       searchResponse.state === "success"
-        ? searchResponse.data.results.filter(s => s.type_ === "multi_community")
+        ? searchResponse.data.multi_communities
         : [];
 
     return (
@@ -1044,9 +1020,7 @@ export class Search extends Component<SearchRouteProps, SearchState> {
   get users() {
     const { searchRes: searchResponse } = this.state;
     const users =
-      searchResponse.state === "success"
-        ? searchResponse.data.results.filter(s => s.type_ === "person")
-        : [];
+      searchResponse.state === "success" ? searchResponse.data.persons : [];
 
     return (
       <>
@@ -1060,9 +1034,19 @@ export class Search extends Component<SearchRouteProps, SearchState> {
   get resultsCount(): number {
     const { searchRes: r } = this.state;
 
-    const searchCount = r.state === "success" ? r.data.results.length : 0;
-
-    return searchCount;
+    if (r.state === "success") {
+      const resolveCount = r.data.resolve !== undefined ? 1 : 0;
+      return (
+        r.data.posts.length +
+        r.data.comments.length +
+        r.data.communities.length +
+        r.data.persons.length +
+        r.data.multi_communities.length +
+        resolveCount
+      );
+    } else {
+      return 0;
+    }
   }
 
   searchToken?: symbol;
@@ -1071,28 +1055,24 @@ export class Search extends Component<SearchRouteProps, SearchState> {
     const {
       q,
       communityId,
-      creatorId,
       type,
-      sort,
       listingType,
       titleOnly,
       postUrlOnly,
-      cursor,
+      creatorId,
     } = props;
 
     if (q) {
       this.setState({ searchRes: LOADING_REQUEST });
       const searchRes = await HttpService.client.search({
-        q,
+        search_term: q,
         community_id: communityId ?? undefined,
         creator_id: creatorId ?? undefined,
         type_: type,
-        sort,
         listing_type: listingType,
         title_only: titleOnly,
         post_url_only: postUrlOnly,
         limit: fetchLimit,
-        ...cursorComponents(cursor),
       });
       if (token !== this.searchToken) {
         return;
@@ -1103,117 +1083,17 @@ export class Search extends Component<SearchRouteProps, SearchState> {
     }
   }
 
-  handleCreatorSearch = debounce(async (text: string) => {
-    if (text.length > 0) {
-      const { creatorId } = this.props;
-      const { creatorSearchOptions } = this.state;
-
-      this.setState({ searchCreatorLoading: true });
-
-      const newOptions = creatorSearchOptions
-        .filter(choice => getIdFromString(choice.value) === creatorId)
-        .concat((await fetchUsers(text)).map(personToChoice));
-
-      this.setState({
-        searchCreatorLoading: false,
-        creatorSearchOptions: newOptions,
-      });
-    }
-  });
-
-  handleCommunitySearch = debounce(async (text: string) => {
-    if (text.length > 0) {
-      const { communityId } = this.props;
-      const { communitySearchOptions } = this.state;
-
-      this.setState({
-        searchCommunitiesLoading: true,
-      });
-
-      const newOptions = communitySearchOptions
-        .filter(choice => getIdFromString(choice.value) === communityId)
-        .concat((await fetchCommunities(text)).map(communityToChoice));
-
-      this.setState({
-        searchCommunitiesLoading: false,
-        communitySearchOptions: newOptions,
-      });
-    }
-  });
-
   getQ(): string | undefined {
     return this.searchInput.current?.value ?? this.props.q;
   }
 
-  handleSortChange(sort: SearchSortType) {
-    this.updateUrl({ sort, cursor: undefined, q: this.getQ() });
-  }
-
-  handleTitleOnlyChange(i: Search, event: any) {
-    const titleOnly = event.target.checked;
-    i.updateUrl({ titleOnly, q: i.getQ() });
-  }
-
-  handlePostUrlOnlyChange(i: Search, event: any) {
-    const postUrlOnly = event.target.checked;
-    i.updateUrl({ postUrlOnly, q: i.getQ() });
-  }
-
-  handleTypeChange(i: Search, event: any) {
-    const type = event.target.value as SearchType;
-
-    i.updateUrl({
-      type,
-      cursor: undefined,
-      q: i.getQ(),
-    });
-  }
-
-  handlePageChange(cursor?: DirectionalCursor) {
-    this.updateUrl({ cursor });
-  }
-
-  handleListingTypeChange(listingType: ListingType) {
-    this.updateUrl({
-      listingType,
-      cursor: undefined,
-      q: this.getQ(),
-    });
-  }
-
-  handleCommunityFilterChange({ value }: Choice) {
-    this.updateUrl({
-      communityId: getIdFromString(value),
-      cursor: undefined,
-      q: this.getQ(),
-    });
-  }
-
-  handleCreatorFilterChange({ value }: Choice) {
-    this.updateUrl({
-      creatorId: getIdFromString(value),
-      cursor: undefined,
-      q: this.getQ(),
-    });
-  }
-
-  handleSearchSubmit(i: Search, event: any) {
-    event.preventDefault();
-
-    i.updateUrl({
-      q: i.getQ(),
-      cursor: undefined,
-    });
-  }
-
-  async updateUrl(props: Partial<SearchProps>) {
+  updateUrl(props: Partial<SearchProps>) {
     const {
       q,
       type,
       listingType,
       titleOnly,
       postUrlOnly,
-      sort,
       communityId,
       creatorId,
       cursor,
@@ -1231,9 +1111,97 @@ export class Search extends Component<SearchRouteProps, SearchState> {
       communityId: communityId?.toString(),
       creatorId: creatorId?.toString(),
       cursor,
-      sort,
     };
 
     this.props.history.push(`/search${getQueryString(queryParams)}`);
   }
+}
+
+const handleCreatorSearch = debounce(async (i: Search, text: string) => {
+  if (text.length > 0) {
+    const { creatorId } = i.props;
+    const { creatorSearchOptions } = i.state;
+
+    i.setState({ searchCreatorLoading: true });
+
+    const newOptions = creatorSearchOptions
+      .filter(choice => getIdFromString(choice.value) === creatorId)
+      .concat((await searchUsers(text)).map(personToChoice));
+
+    i.setState({
+      searchCreatorLoading: false,
+      creatorSearchOptions: newOptions,
+    });
+  }
+});
+
+const handleCommunitySearch = debounce(async (i: Search, text: string) => {
+  if (text.length > 0) {
+    const { communityId } = i.props;
+    const { communitySearchOptions } = i.state;
+
+    i.setState({
+      searchCommunitiesLoading: true,
+    });
+
+    const newOptions = communitySearchOptions
+      .filter(choice => getIdFromString(choice.value) === communityId)
+      .concat((await searchCommunities(text)).map(communityToChoice));
+
+    i.setState({
+      searchCommunitiesLoading: false,
+      communitySearchOptions: newOptions,
+    });
+  }
+});
+
+function handleTitleOnlyChange(i: Search, titleOnly: boolean) {
+  // Don't allow post url and post title only to be checked at the same time
+  i.updateUrl({ titleOnly, q: i.getQ(), postUrlOnly: false });
+}
+
+function handlePostUrlOnlyChange(i: Search, postUrlOnly: boolean) {
+  // Don't allow post url and post title only to be checked at the same time
+  i.updateUrl({ postUrlOnly, q: i.getQ(), titleOnly: false });
+}
+
+function handleTypeChange(i: Search, type: SearchType) {
+  i.updateUrl({
+    type,
+    cursor: undefined,
+    q: i.getQ(),
+  });
+}
+
+function handleListingTypeChange(i: Search, listingType: ListingType) {
+  i.updateUrl({
+    listingType,
+    cursor: undefined,
+    q: i.getQ(),
+  });
+}
+
+function handleCommunityFilterChange(i: Search, choices: Choice[]) {
+  i.updateUrl({
+    communityId: getIdFromString(choices[0].value),
+    cursor: undefined,
+    q: i.getQ(),
+  });
+}
+
+function handleCreatorFilterChange(i: Search, choices: Choice[]) {
+  i.updateUrl({
+    creatorId: getIdFromString(choices[0].value),
+    cursor: undefined,
+    q: i.getQ(),
+  });
+}
+
+function handleSearchSubmit(i: Search, event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+
+  i.updateUrl({
+    q: i.getQ(),
+    cursor: undefined,
+  });
 }

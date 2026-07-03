@@ -1,4 +1,4 @@
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { Component, InfernoNode } from "inferno";
 import { T } from "inferno-i18next-dess";
 import {
   ApproveRegistrationApplication,
@@ -15,14 +15,13 @@ import { MomentTime } from "./moment-time";
 interface RegistrationApplicationProps {
   application: RegistrationApplicationView;
   myUserInfo: MyUserInfo | undefined;
-  onApproveApplication(form: ApproveRegistrationApplication): void;
+  onApproveApplication: (form: ApproveRegistrationApplication) => void;
+  loading: boolean;
 }
 
 interface RegistrationApplicationState {
   denyReason?: string;
   denyExpanded: boolean;
-  approveLoading: boolean;
-  denyLoading: boolean;
 }
 
 export class RegistrationApplication extends Component<
@@ -32,24 +31,16 @@ export class RegistrationApplication extends Component<
   state: RegistrationApplicationState = {
     denyReason: this.props.application.registration_application.deny_reason,
     denyExpanded: false,
-    approveLoading: false,
-    denyLoading: false,
   };
 
-  constructor(props: any, context: any) {
-    super(props, context);
-    this.handleDenyReasonChange = this.handleDenyReasonChange.bind(this);
-  }
   componentWillReceiveProps(
     nextProps: Readonly<
       { children?: InfernoNode } & RegistrationApplicationProps
     >,
-  ): void {
+  ) {
     if (this.props !== nextProps) {
       this.setState({
         denyExpanded: false,
-        approveLoading: false,
-        denyLoading: false,
       });
     }
   }
@@ -67,6 +58,7 @@ export class RegistrationApplication extends Component<
             person={a.creator}
             banned={false}
             myUserInfo={this.props.myUserInfo}
+            muted={false}
           />
         </div>
         <div>
@@ -98,6 +90,7 @@ export class RegistrationApplication extends Component<
                   person={a.admin}
                   banned={false}
                   myUserInfo={this.props.myUserInfo}
+                  muted={false}
                 />
               </T>
             ) : (
@@ -108,6 +101,7 @@ export class RegistrationApplication extends Component<
                     person={a.admin}
                     banned={false}
                     myUserInfo={this.props.myUserInfo}
+                    muted={false}
                   />
                 </T>
                 {ra.deny_reason && (
@@ -134,22 +128,23 @@ export class RegistrationApplication extends Component<
             <div className="col-sm-10">
               <MarkdownTextArea
                 initialContent={this.state.denyReason}
-                onContentChange={this.handleDenyReasonChange}
+                onContentChange={val => handleDenyReasonChange(this, val)}
                 hideNavigationWarnings
                 allLanguages={[]}
                 siteLanguages={[]}
                 myUserInfo={this.props.myUserInfo}
+                imageUploadDisabled
               />
             </div>
           </div>
         )}
         {(!ra.admin_id || (ra.admin_id && !accepted)) && (
           <button
-            className="btn btn-secondary me-2 my-2"
-            onClick={linkEvent(this, this.handleApprove)}
+            className="btn btn-light border-light-subtle me-2 my-2"
+            onClick={() => handleApprove(this)}
             aria-label={I18NextService.i18n.t("approve")}
           >
-            {this.state.approveLoading ? (
+            {this.props.loading ? (
               <Spinner />
             ) : (
               I18NextService.i18n.t("approve")
@@ -158,43 +153,39 @@ export class RegistrationApplication extends Component<
         )}
         {(!ra.admin_id || (ra.admin_id && accepted)) && (
           <button
-            className="btn btn-secondary me-2"
-            onClick={linkEvent(this, this.handleDeny)}
+            className="btn btn-light border-light-subtle me-2"
+            onClick={() => handleDeny(this)}
             aria-label={I18NextService.i18n.t("deny")}
           >
-            {this.state.denyLoading ? (
-              <Spinner />
-            ) : (
-              I18NextService.i18n.t("deny")
-            )}
+            {this.props.loading ? <Spinner /> : I18NextService.i18n.t("deny")}
           </button>
         )}
       </div>
     );
   }
+}
 
-  handleApprove(i: RegistrationApplication) {
-    i.setState({ denyExpanded: false, approveLoading: true });
+function handleApprove(i: RegistrationApplication) {
+  i.setState({ denyExpanded: false });
+  i.props.onApproveApplication({
+    id: i.props.application.registration_application.id,
+    approve: true,
+  });
+}
+
+function handleDeny(i: RegistrationApplication) {
+  if (i.state.denyExpanded) {
+    i.setState({ denyExpanded: false });
     i.props.onApproveApplication({
       id: i.props.application.registration_application.id,
-      approve: true,
+      approve: false,
+      deny_reason: i.state.denyReason,
     });
+  } else {
+    i.setState({ denyExpanded: true });
   }
+}
 
-  handleDeny(i: RegistrationApplication) {
-    if (i.state.denyExpanded) {
-      i.setState({ denyExpanded: false, denyLoading: true });
-      i.props.onApproveApplication({
-        id: i.props.application.registration_application.id,
-        approve: false,
-        deny_reason: i.state.denyReason,
-      });
-    } else {
-      i.setState({ denyExpanded: true });
-    }
-  }
-
-  handleDenyReasonChange(val: string) {
-    this.setState({ denyReason: val });
-  }
+function handleDenyReasonChange(i: RegistrationApplication, val: string) {
+  i.setState({ denyReason: val });
 }

@@ -1,4 +1,4 @@
-import { Component, linkEvent } from "inferno";
+import { Component } from "inferno";
 import { Icon, Spinner } from "../icon";
 import classNames from "classnames";
 import { tippyMixin } from "../../mixins/tippy-mixin";
@@ -10,6 +10,7 @@ interface ActionButtonPropsBase {
   inline?: boolean;
   inlineWithText?: boolean;
   noLoading?: boolean;
+  loading?: boolean;
   disabled?: boolean;
 }
 
@@ -25,59 +26,38 @@ interface ActionButtonPropsNoLoading extends ActionButtonPropsBase {
 
 type ActionButtonProps = ActionButtonPropsLoading | ActionButtonPropsNoLoading;
 
-interface ActionButtonState {
-  loading: boolean;
-}
-
-function handleClick(i: ActionButton) {
-  if (!i.props.noLoading) {
-    i.setState({ loading: true });
-  }
-  i.props.onClick();
-  i.setState({ loading: false });
-}
+type ActionButtonState = object;
 
 @tippyMixin
 export default class ActionButton extends Component<
   ActionButtonProps,
   ActionButtonState
 > {
-  state: ActionButtonState = {
-    loading: false,
-  };
-
-  constructor(props: ActionButtonProps, context: any) {
-    super(props, context);
-  }
-
   render() {
-    const { label, icon, iconClass, inline, inlineWithText } = this.props;
+    const { label, icon, iconClass, inline, inlineWithText, onClick } =
+      this.props;
 
     return (
       <button
         className={classNames(
-          "btn btn-link",
+          "btn btn-sm border-light-subtle",
           inline || inlineWithText
-            ? "btn-animate text-body py-0 px-1 ms-2 me-0"
+            ? "btn-animate text-body"
             : "d-flex align-items-center rounded-0 dropdown-item",
         )}
-        onClick={linkEvent(this, handleClick)}
+        onClick={onClick}
         aria-label={label}
         data-tippy-content={inline ? label : undefined}
-        disabled={this.state.loading || this.props.disabled}
+        disabled={this.props.loading || this.props.disabled}
       >
-        {this.state.loading ? (
+        {this.props.loading ? (
           <Spinner />
         ) : (
-          <Icon
-            classes={classNames(iconClass, {
-              "me-2": !(inline || inlineWithText),
-            })}
-            icon={icon}
-            inline
-          />
+          <>
+            <Icon classes={classNames(iconClass, "me-1")} icon={icon} inline />
+            {(!inline || inlineWithText) && label}
+          </>
         )}
-        {(!inline || inlineWithText) && label}
       </button>
     );
   }

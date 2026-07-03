@@ -1,21 +1,19 @@
 import {
   commentToFlatNode,
   enableNsfw,
+  handleWarnComment,
+  handleWarnPost,
   myAuth,
+  notificationsRSSUrl,
+  reportToast,
   setIsoData,
   updateCommunityBlock,
   updatePersonBlock,
 } from "@utils/app";
-import {
-  capitalizeFirstLetter,
-  cursorComponents,
-  randomStr,
-  resourcesSettled,
-} from "@utils/helpers";
+import { capitalizeFirstLetter, resourcesSettled } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
-import { DirectionalCursor, RouteDataResponse } from "@utils/types";
-import classNames from "classnames";
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { ItemIdAndRes, itemLoading, RouteDataResponse } from "@utils/types";
+import { Component, InfernoNode } from "inferno";
 import {
   AddAdmin,
   AddModToCommunity,
@@ -24,8 +22,6 @@ import {
   PersonResponse,
   BlockCommunity,
   BlockPerson,
-  CommentId,
-  CommentReportResponse,
   CommentResponse,
   CommunityId,
   CreateComment,
@@ -40,23 +36,25 @@ import {
   EditPrivateMessage,
   GetSiteResponse,
   LemmyHttp,
-  ListNotificationsResponse,
+  NotificationTypeFilter,
+  PagedResponse,
   LockComment,
   MarkNotificationAsRead,
   MarkPostAsRead,
   NotePerson,
-  NotificationDataType,
   NotificationView,
   PrivateMessageId,
-  PrivateMessageReportResponse,
   PrivateMessageResponse,
   PurgeComment,
   PurgePerson,
-  PurgePost,
   RemoveComment,
   SaveComment,
   SuccessResponse,
   TransferCommunity,
+  PaginationCursor,
+  MyUserInfo,
+  CommentId,
+  PostId,
 } from "lemmy-js-client";
 import { fetchLimit, relTags } from "@utils/config";
 import { InitialFetchRequest } from "@utils/types";
@@ -73,9 +71,9 @@ import { toast } from "@utils/app";
 import { HtmlTags } from "../common/html-tags";
 import { Icon, Spinner } from "../common/icon";
 import { PrivateMessage } from "../private_message/private-message";
-import { getHttpBaseInternal } from "../../utils/env";
+import { getHttpBaseInternal } from "@utils/env";
 import { CommentsLoadingSkeleton } from "../common/loading-skeleton";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { isBrowser } from "@utils/browser";
 import { PaginatorCursor } from "../common/paginator-cursor";
@@ -85,25 +83,41 @@ import { CommentNode } from "@components/comment/comment-node";
 import { PostListing } from "@components/post/post-listing";
 import { NotificationModlogItem } from "./notification-modlog-item";
 import {
-  RadioButtonGroup,
-  RadioOption,
-} from "@components/common/radio-button-group";
+  FilterChipDropdown,
+  FilterOption,
+} from "@components/common/filter-chip-dropdown";
+import { FilterChipCheckbox } from "@components/common/filter-chip-checkbox";
+import { removeLocalStorageMarkdown } from "@components/common/markdown-textarea";
 
-enum UnreadOrAll {
-  Unread,
-  All,
-}
+const messageTypeOptions: FilterOption<NotificationTypeFilter>[] = [
+  { value: "all", i18n: "all" },
+  { value: "reply", i18n: "replies" },
+  { value: "mention", i18n: "mentions" },
+  { value: "private_message", i18n: "messages" },
+  { value: "mod_action", i18n: "modlog" },
+];
 
 type NotificationsData = RouteDataResponse<{
-  notifsRes: ListNotificationsResponse;
+  notifsRes: PagedResponse<NotificationView>;
 }>;
 
 interface NotificationsState {
-  unreadOrAll: UnreadOrAll;
-  messageType: NotificationDataType;
-  notifsRes: RequestState<ListNotificationsResponse>;
+  showUnreadOnly: boolean;
+  messageType: NotificationTypeFilter;
+  notifsRes: RequestState<PagedResponse<NotificationView>>;
   markAllAsReadRes: RequestState<SuccessResponse>;
-  cursor?: DirectionalCursor;
+  privateMessageRes: ItemIdAndRes<PrivateMessageId, PrivateMessageResponse>;
+  privateMessageDeleteRes: ItemIdAndRes<
+    PrivateMessageId,
+    PrivateMessageResponse
+  >;
+  privateMessageReadRes: ItemIdAndRes<PrivateMessageId, SuccessResponse>;
+  createCommentRes: ItemIdAndRes<CommentId, CommentResponse>;
+  editCommentRes: ItemIdAndRes<CommentId, CommentResponse>;
+  markCommentReadLoadingRes: ItemIdAndRes<CommentId, SuccessResponse>;
+  voteCommentRes: ItemIdAndRes<CommentId, CommentResponse>;
+  markPostReadLoadingRes: ItemIdAndRes<PostId, SuccessResponse>;
+  cursor?: PaginationCursor;
   siteRes: GetSiteResponse;
   isIsomorphic: boolean;
 }
@@ -127,11 +141,19 @@ export class Notifications extends Component<
 > {
   private isoData = setIsoData<NotificationsData>(this.context);
   state: NotificationsState = {
-    unreadOrAll: UnreadOrAll.Unread,
+    showUnreadOnly: true,
     messageType: "all",
     siteRes: this.isoData.siteRes,
     notifsRes: EMPTY_REQUEST,
     markAllAsReadRes: EMPTY_REQUEST,
+    privateMessageRes: { id: 0, res: EMPTY_REQUEST },
+    privateMessageDeleteRes: { id: 0, res: EMPTY_REQUEST },
+    privateMessageReadRes: { id: 0, res: EMPTY_REQUEST },
+    createCommentRes: { id: 0, res: EMPTY_REQUEST },
+    editCommentRes: { id: 0, res: EMPTY_REQUEST },
+    voteCommentRes: { id: 0, res: EMPTY_REQUEST },
+    markCommentReadLoadingRes: { id: 0, res: EMPTY_REQUEST },
+    markPostReadLoadingRes: { id: 0, res: EMPTY_REQUEST },
     isIsomorphic: false,
   };
 
@@ -139,40 +161,8 @@ export class Notifications extends Component<
     return resourcesSettled([this.state.notifsRes]);
   }
 
-  constructor(props: any, context: any) {
+  constructor(props: NotificationsRouteProps, context: object) {
     super(props, context);
-
-    this.handlePageChange = this.handlePageChange.bind(this);
-
-    this.handleCreateComment = this.handleCreateComment.bind(this);
-    this.handleEditComment = this.handleEditComment.bind(this);
-    this.handleSaveComment = this.handleSaveComment.bind(this);
-    this.handleBlockPerson = this.handleBlockPerson.bind(this);
-    this.handleBlockCommunity = this.handleBlockCommunity.bind(this);
-    this.handleDeleteComment = this.handleDeleteComment.bind(this);
-    this.handleRemoveComment = this.handleRemoveComment.bind(this);
-    this.handleLockComment = this.handleLockComment.bind(this);
-    this.handleCommentVote = this.handleCommentVote.bind(this);
-    this.handleAddModToCommunity = this.handleAddModToCommunity.bind(this);
-    this.handleAddAdmin = this.handleAddAdmin.bind(this);
-    this.handlePurgePerson = this.handlePurgePerson.bind(this);
-    this.handlePurgeComment = this.handlePurgeComment.bind(this);
-    this.handleCommentReport = this.handleCommentReport.bind(this);
-    this.handleDistinguishComment = this.handleDistinguishComment.bind(this);
-    this.handleTransferCommunity = this.handleTransferCommunity.bind(this);
-    this.handleCommentMarkAsRead = this.handleCommentMarkAsRead.bind(this);
-    this.handleBanFromCommunity = this.handleBanFromCommunity.bind(this);
-    this.handleBanPerson = this.handleBanPerson.bind(this);
-    this.handleMarkNotificationAsRead =
-      this.handleMarkNotificationAsRead.bind(this);
-
-    this.handleDeleteMessage = this.handleDeleteMessage.bind(this);
-    this.handleMessageMarkAsRead = this.handleMessageMarkAsRead.bind(this);
-    this.handleMessageReport = this.handleMessageReport.bind(this);
-    this.handleCreateMessage = this.handleCreateMessage.bind(this);
-    this.handleEditMessage = this.handleEditMessage.bind(this);
-    this.handleMarkPostAsRead = this.handleMarkPostAsRead.bind(this);
-    this.handlePersonNote = this.handlePersonNote.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -202,11 +192,9 @@ export class Notifications extends Component<
   }
 
   get hasUnreads(): boolean {
-    if (this.state.unreadOrAll === UnreadOrAll.Unread) {
+    if (this.state.showUnreadOnly) {
       const { notifsRes } = this.state;
-      return (
-        notifsRes.state === "success" && notifsRes.data.notifications.length > 0
-      );
+      return notifsRes.state === "success" && notifsRes.data.items.length > 0;
     } else {
       return false;
     }
@@ -214,14 +202,14 @@ export class Notifications extends Component<
 
   render() {
     const auth = myAuth();
-    const notifsRss = auth ? `/feeds/notifications/${auth}.xml` : undefined;
+    const notifsRss = auth ? notificationsRSSUrl(auth) : undefined;
     return (
       <div className="notifications container-lg">
         <div className="row">
           <div className="col-12">
             <HtmlTags
               title={this.documentTitle}
-              path={this.context.router.route.match.url}
+              context={this.context as RouterContext}
             />
             <h1 className="h4 mb-4">
               {I18NextService.i18n.t("notifications")}
@@ -238,26 +226,12 @@ export class Notifications extends Component<
                 </small>
               )}
             </h1>
-            {this.hasUnreads && (
-              <button
-                className="btn btn-secondary mb-2 mb-sm-3"
-                onClick={linkEvent(this, this.handleMarkAllAsRead)}
-              >
-                {this.state.markAllAsReadRes.state === "loading" ? (
-                  <Spinner />
-                ) : (
-                  capitalizeFirstLetter(
-                    I18NextService.i18n.t("mark_all_as_read"),
-                  )
-                )}
-              </button>
-            )}
             {this.selects()}
             {this.all()}
             <PaginatorCursor
               current={this.state.cursor}
               resource={this.state.notifsRes}
-              onPageChange={this.handlePageChange}
+              onPageChange={form => handlePageChange(this, form)}
             />
           </div>
         </div>
@@ -265,72 +239,49 @@ export class Notifications extends Component<
     );
   }
 
-  unreadOrAllRadios() {
-    const radioId = randomStr();
-
+  messageTypeFilters() {
     return (
-      <div className="btn-group btn-group-toggle flex-wrap" role="group">
-        <input
-          id={`${radioId}-unread`}
-          type="radio"
-          className="btn-check"
-          value={UnreadOrAll.Unread}
-          checked={this.state.unreadOrAll === UnreadOrAll.Unread}
-          onChange={linkEvent(this, this.handleUnreadOrAllChange)}
-        />
-        <label
-          htmlFor={`${radioId}-unread`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.unreadOrAll === UnreadOrAll.Unread,
-          })}
-        >
-          {I18NextService.i18n.t("unread")}
-        </label>
-
-        <input
-          id={`${radioId}-all`}
-          type="radio"
-          className="btn-check"
-          value={UnreadOrAll.All}
-          checked={this.state.unreadOrAll === UnreadOrAll.All}
-          onChange={linkEvent(this, this.handleUnreadOrAllChange)}
-        />
-        <label
-          htmlFor={`${radioId}-all`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.unreadOrAll === UnreadOrAll.All,
-          })}
-        >
-          {I18NextService.i18n.t("all")}
-        </label>
-      </div>
-    );
-  }
-
-  messageTypeRadios() {
-    const allStates: RadioOption[] = [
-      { value: "all" },
-      { value: "reply", i18n: "replies" },
-      { value: "mention", i18n: "mentions" },
-      { value: "private_message", i18n: "messages" },
-      { value: "mod_action", i18n: "modlog" },
-    ];
-
-    return (
-      <RadioButtonGroup
-        allOptions={allStates}
-        currentOption={this.state.messageType}
-        onClick={val => this.handleMessageTypeChange(this, val)}
+      <FilterChipDropdown
+        label={"type"}
+        allOptions={messageTypeOptions}
+        currentOption={messageTypeOptions.find(
+          t => t.value === this.state.messageType,
+        )}
+        onSelect={val => handleMessageTypeChange(this, val)}
       />
     );
   }
 
   selects() {
     return (
-      <div className="row row-cols-auto g-2 g-sm-3 mb-2 mb-sm-3">
-        <div className="col">{this.unreadOrAllRadios()}</div>
-        <div className="col">{this.messageTypeRadios()}</div>
+      <div className="row row-cols-auto align-items-center g-3 mb-2">
+        <div className="col">
+          <FilterChipCheckbox
+            option={"show_unread_only"}
+            isChecked={this.state.showUnreadOnly}
+            onCheck={val => handleShowUnreadOnlyChange(this, val)}
+          />
+        </div>
+        <div className="col">{this.messageTypeFilters()}</div>
+        {this.hasUnreads && (
+          <div className="col">{this.markAllAsReadBtn()}</div>
+        )}
       </div>
+    );
+  }
+
+  markAllAsReadBtn() {
+    return (
+      <button
+        className="btn btn-sm btn-light border-light-subtle"
+        onClick={() => handleMarkAllAsRead(this)}
+      >
+        {this.state.markAllAsReadRes.state === "loading" ? (
+          <Spinner />
+        ) : (
+          capitalizeFirstLetter(I18NextService.i18n.t("mark_all_as_read"))
+        )}
+      </button>
     );
   }
 
@@ -339,40 +290,57 @@ export class Notifications extends Component<
   renderItemType(item: NotificationView) {
     const siteRes = this.state.siteRes;
     const data = item.data;
+    const myUserInfo = this.isoData.myUserInfo;
     switch (data.type_) {
       case "comment":
         return (
           <CommentNode
             key={item.notification.id}
             node={commentToFlatNode(data)}
+            createLoading={itemLoading(this.state.createCommentRes)}
+            editLoading={itemLoading(this.state.editCommentRes)}
+            voteLoading={itemLoading(this.state.voteCommentRes)}
+            fetchChildrenLoading={undefined}
             viewType={"flat"}
             showCommunity
             showContext
             hideImages={false}
+            read={item.notification.read}
+            showMarkRead="main_bar"
+            showBadgeForPostCreator={false}
+            mutePersonName={false}
+            muteCommunityName
+            hideAvatar
+            markReadLoading={itemLoading(this.state.markCommentReadLoadingRes)}
             allLanguages={siteRes.all_languages}
             siteLanguages={siteRes.discussion_languages}
-            myUserInfo={this.isoData.myUserInfo}
+            myUserInfo={myUserInfo}
             localSite={siteRes.site_view.local_site}
             admins={this.isoData.siteRes.admins}
-            onSaveComment={this.handleSaveComment}
-            onBlockPerson={this.handleBlockPerson}
-            onBlockCommunity={this.handleBlockCommunity}
-            onDeleteComment={this.handleDeleteComment}
-            onRemoveComment={this.handleRemoveComment}
-            onCommentVote={this.handleCommentVote}
-            onCommentReport={this.handleCommentReport}
-            onDistinguishComment={this.handleDistinguishComment}
-            onAddModToCommunity={this.handleAddModToCommunity}
-            onAddAdmin={this.handleAddAdmin}
-            onTransferCommunity={this.handleTransferCommunity}
-            onPurgeComment={this.handlePurgeComment}
-            onPurgePerson={this.handlePurgePerson}
-            onBanPersonFromCommunity={this.handleBanFromCommunity}
-            onBanPerson={this.handleBanPerson}
-            onCreateComment={this.handleCreateComment}
-            onEditComment={this.handleEditComment}
-            onPersonNote={this.handlePersonNote}
-            onLockComment={this.handleLockComment}
+            onSaveComment={form => handleSaveComment(this, form)}
+            onBlockPerson={form => handleBlockPerson(form, myUserInfo)}
+            onBlockCommunity={form => handleBlockCommunity(form, myUserInfo)}
+            onDeleteComment={form => handleDeleteComment(this, form)}
+            onRemoveComment={form => handleRemoveComment(this, form)}
+            onCommentVote={form => handleCommentVote(this, form)}
+            onCommentReport={form => handleCommentReport(form)}
+            onDistinguishComment={form => handleDistinguishComment(this, form)}
+            onAddModToCommunity={form => handleAddModToCommunity(form)}
+            onAddAdmin={form => handleAddAdmin(this, form)}
+            onTransferCommunity={form => handleTransferCommunity(form)}
+            onPurgeComment={form => handlePurgeComment(this, form)}
+            onPurgePerson={form => handlePurgePerson(this, form)}
+            onBanPersonFromCommunity={form =>
+              handleBanFromCommunity(this, form)
+            }
+            onBanPerson={form => handleBanPerson(this, form)}
+            onCreateComment={form => handleCreateComment(this, form)}
+            onEditComment={form => handleEditComment(this, form)}
+            onPersonNote={form => handlePersonNote(this, form)}
+            onLockComment={form => handleLockComment(this, form)}
+            onWarnComment={form => handleWarnComment(form)}
+            onMarkRead={(id, read) => handleMarkCommentAsRead(this, id, read)}
+            onFetchChildren={() => {}}
           />
         );
       case "private_message":
@@ -380,41 +348,68 @@ export class Notifications extends Component<
           <PrivateMessage
             key={item.notification.id}
             private_message_view={data}
-            myUserInfo={this.isoData.myUserInfo}
-            onDelete={this.handleDeleteMessage}
-            onReport={this.handleMessageReport}
-            onCreate={this.handleCreateMessage}
-            onEdit={this.handleEditMessage}
             read={item.notification.read}
-            onMarkRead={this.handleMessageMarkAsRead}
+            myUserInfo={myUserInfo}
+            imageUploadDisabled={
+              siteRes.site_view.local_site.image_upload_disabled
+            }
+            onDelete={form => handleDeleteMessage(this, form)}
+            onReport={form => handleMessageReport(form)}
+            onCreate={form => handleCreateMessage(this, form)}
+            onEdit={form => handleEditMessage(this, form)}
+            onMarkRead={(id, read) => handleMarkMessageAsRead(this, id, read)}
+            createOrEditLoading={
+              itemLoading(this.state.privateMessageRes) ===
+              data.private_message.id
+            }
+            deleteLoading={
+              itemLoading(this.state.privateMessageDeleteRes) ===
+              data.private_message.id
+            }
+            readLoading={
+              itemLoading(this.state.privateMessageReadRes) ===
+              data.private_message.id
+            }
           />
         );
       case "post":
         return (
-          this.isoData.myUserInfo && (
+          myUserInfo && (
             <PostListing
               postView={data}
+              notificationRead={item.notification.read}
+              markReadLoading={
+                itemLoading(this.state.markPostReadLoadingRes) === data.post.id
+              }
+              topBorder
+              voteLoading={false}
               showCommunity
               showCrossPosts="show_separately"
               enableNsfw={enableNsfw(this.isoData.siteRes)}
               showAdultConsentModal={this.isoData.showAdultConsentModal}
+              communityTags={[]}
               allLanguages={[]}
               siteLanguages={[]}
               hideImage
-              myUserInfo={this.isoData.myUserInfo}
+              myUserInfo={myUserInfo}
               localSite={this.isoData.siteRes.site_view.local_site}
               admins={this.isoData.siteRes.admins}
               postListingMode="small_card"
               crossPosts={[]}
               showBody={"preview"}
               editLoading={false}
+              mutePersonName={false}
+              muteCommunityName
+              hideAvatar={false}
               viewOnly // TODO: comments do allow edits and moderation
-              onPostEdit={() => EMPTY_REQUEST}
-              onPostVote={() => EMPTY_REQUEST}
+              onPostEdit={() => {}}
+              onPostModEdit={() => {}}
+              onPostVote={() => {}}
               onPostReport={() => {}}
               onBlockPerson={() => {}}
               onBlockCommunity={() => {}}
               onLockPost={() => {}}
+              onWarnPost={form => handleWarnPost(form)}
               onDeletePost={() => {}}
               onRemovePost={() => {}}
               onSavePost={() => {}}
@@ -427,10 +422,10 @@ export class Notifications extends Component<
               onAddAdmin={() => {}}
               onTransferCommunity={() => {}}
               onHidePost={() => {}}
-              markable
+              showMarkRead="main_bar"
               disableAutoMarkAsRead
-              onMarkPostAsRead={this.handleMarkPostAsRead}
-              onPersonNote={this.handlePersonNote}
+              onMarkPostAsRead={form => handleMarkPostAsRead(this, form)}
+              onPersonNote={form => handlePersonNote(this, form)}
               onScrollIntoCommentsClick={() => {}}
             />
           )
@@ -440,8 +435,8 @@ export class Notifications extends Component<
           <NotificationModlogItem
             notification={item.notification}
             modlog_view={data}
-            myUserInfo={this.isoData.myUserInfo}
-            onMarkRead={this.handleMarkNotificationAsRead}
+            myUserInfo={myUserInfo}
+            onMarkRead={form => handleMarkNotificationAsRead(this, form)}
           />
         );
       }
@@ -456,34 +451,16 @@ export class Notifications extends Component<
       return (
         <div>
           {notifsRes.state === "success" &&
-            notifsRes.data.notifications.map(r => this.renderItemType(r))}
+            notifsRes.data.items.map(r => this.renderItemType(r))}
         </div>
       );
     }
   }
 
-  async handlePageChange(cursor?: DirectionalCursor) {
-    this.setState({ cursor });
-    await this.refetch();
-  }
-
-  async handleUnreadOrAllChange(i: Notifications, event: any) {
-    i.setState({ unreadOrAll: Number(event.target.value), cursor: undefined });
-    await i.refetch();
-  }
-
-  async handleMessageTypeChange(i: Notifications, val: string) {
-    this.setState({
-      messageType: val as NotificationDataType,
-      cursor: undefined,
-    });
-    i.refetch();
-  }
-
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
     myUserInfo,
-  }: InitialFetchRequest): Promise<NotificationsData> {
+  }: InitialFetchRequest): Promise<NotificationsData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -499,12 +476,11 @@ export class Notifications extends Component<
     } else {
       return { notifsRes: EMPTY_REQUEST };
     }
-  }
+  };
 
   refetchToken?: symbol;
   async refetch() {
     const token = (this.refetchToken = Symbol());
-    const unread_only = this.state.unreadOrAll === UnreadOrAll.Unread;
     const cursor = this.state.cursor;
 
     this.setState({
@@ -513,8 +489,8 @@ export class Notifications extends Component<
     await HttpService.client
       .listNotifications({
         type_: this.state.messageType,
-        unread_only,
-        ...cursorComponents(cursor),
+        unread_only: this.state.showUnreadOnly,
+        page_cursor: cursor,
         limit: fetchLimit,
       })
       .then(notifsRes => {
@@ -524,295 +500,30 @@ export class Notifications extends Component<
           });
         }
       });
-    UnreadCounterService.Instance.updateUnreadCounts();
-  }
-
-  async handleMarkAllAsRead(i: Notifications) {
-    i.setState({ markAllAsReadRes: LOADING_REQUEST });
-
-    const markAllAsReadRes =
-      await HttpService.client.markAllNotificationsAsRead();
-
-    if (markAllAsReadRes.state === "success") {
-      i.setState(s => {
-        if (s.notifsRes.state === "success") {
-          s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-            nv => {
-              const a = {
-                notification: { ...nv.notification },
-                data: { ...nv.data },
-              };
-              setRead(a, true);
-              return a;
-            },
-          );
-        }
-        return { notifsRes: s.notifsRes, markAllAsReadRes };
-      });
-    } else {
-      i.setState({ markAllAsReadRes });
-    }
-  }
-
-  async handleAddModToCommunity(form: AddModToCommunity) {
-    // TODO not sure what to do here
-    HttpService.client.addModToCommunity(form);
-  }
-
-  async handlePurgePerson(form: PurgePerson) {
-    const purgePersonRes = await HttpService.client.purgePerson(form);
-    this.purgeItem(purgePersonRes);
-  }
-
-  async handlePurgeComment(form: PurgeComment) {
-    const purgeCommentRes = await HttpService.client.purgeComment(form);
-    this.purgeItem(purgeCommentRes);
-  }
-
-  async handlePurgePost(form: PurgePost) {
-    const purgeRes = await HttpService.client.purgePost(form);
-    this.purgeItem(purgeRes);
-  }
-
-  async handleBlockPerson(form: BlockPerson) {
-    const blockPersonRes = await HttpService.client.blockPerson(form);
-    if (blockPersonRes.state === "success") {
-      updatePersonBlock(
-        blockPersonRes.data,
-        form.block,
-        this.isoData.myUserInfo,
-      );
-    }
-  }
-
-  async handleBlockCommunity(form: BlockCommunity) {
-    const blockCommunityRes = await HttpService.client.blockCommunity(form);
-    if (blockCommunityRes.state === "success") {
-      updateCommunityBlock(
-        blockCommunityRes.data,
-        form.block,
-        this.isoData.myUserInfo,
-      );
-    }
-  }
-
-  async handleCreateComment(form: CreateComment) {
-    const res = await HttpService.client.createComment(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("reply_sent"));
-      // The reply just disappears. Only replies to private messages appear in the notifs.
-    }
-
-    return res;
-  }
-
-  async handleEditComment(form: EditComment) {
-    const res = await HttpService.client.editComment(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("edit"));
-      this.findAndUpdateComment(res);
-    } else if (res.state === "failed") {
-      toast(res.err.name, "danger");
-    }
-
-    return res;
-  }
-
-  async handleDeleteComment(form: DeleteComment) {
-    const res = await HttpService.client.deleteComment(form);
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("deleted"));
-      this.findAndUpdateComment(res);
-    }
-  }
-
-  async handleRemoveComment(form: RemoveComment) {
-    const res = await HttpService.client.removeComment(form);
-    if (res.state === "success") {
-      toast(
-        I18NextService.i18n.t(
-          form.removed ? "removed_comment" : "restored_comment",
-        ),
-      );
-      this.findAndUpdateComment(res);
-    }
-  }
-
-  async handleLockComment(form: LockComment) {
-    const res = await HttpService.client.lockComment(form);
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t(form.locked ? "locked" : "unlocked"));
-      this.findAndUpdateComment(res);
-    }
-  }
-
-  async handleSaveComment(form: SaveComment) {
-    const res = await HttpService.client.saveComment(form);
-    this.findAndUpdateComment(res);
-  }
-
-  async handleCommentVote(form: CreateCommentLike) {
-    const res = await HttpService.client.likeComment(form);
-    this.findAndUpdateComment(res);
-  }
-
-  async handleCommentReport(form: CreateCommentReport) {
-    const reportRes = await HttpService.client.createCommentReport(form);
-    this.reportToast(reportRes);
-  }
-
-  async handleDistinguishComment(form: DistinguishComment) {
-    const res = await HttpService.client.distinguishComment(form);
-    this.findAndUpdateComment(res);
-  }
-
-  async handleAddAdmin(form: AddAdmin) {
-    const addAdminRes = await HttpService.client.addAdmin(form);
-
-    if (addAdminRes.state === "success") {
-      this.setState(s => ((s.siteRes.admins = addAdminRes.data.admins), s));
-    }
-  }
-
-  async handleTransferCommunity(form: TransferCommunity) {
-    await HttpService.client.transferCommunity(form);
-    toast(I18NextService.i18n.t("transfer_community"));
-  }
-
-  async handleCommentMarkAsRead(comment_id: CommentId, read: boolean) {
-    if (this.state.notifsRes.state !== "success") return;
-    const notification = this.state.notifsRes.data.notifications.find(
-      n => n.data.type_ === "comment" && n.data.comment.id === comment_id,
-    );
-    if (notification) {
-      await this.handleMarkNotificationAsRead({
-        notification_id: notification.notification.id,
-        read,
-      });
-    }
-  }
-
-  async handleMessageMarkAsRead(
-    privateMessageId: PrivateMessageId,
-    read: boolean,
-  ) {
-    if (this.state.notifsRes.state !== "success") return;
-    const notification = this.state.notifsRes.data.notifications.find(
-      n =>
-        n.data.type_ === "private_message" &&
-        n.data.private_message.id === privateMessageId,
-    );
-    if (notification) {
-      await this.handleMarkNotificationAsRead({
-        notification_id: notification.notification.id,
-        read,
-      });
-    }
-  }
-
-  async handleBanFromCommunity(form: BanFromCommunity) {
-    const banRes = await HttpService.client.banFromCommunity(form);
-    this.updateBanFromCommunity(banRes, form.community_id, form.ban);
-  }
-
-  async handleBanPerson(form: BanPerson) {
-    const banRes = await HttpService.client.banPerson(form);
-    this.updateBan(banRes, form.ban);
-  }
-
-  async handleDeleteMessage(form: DeletePrivateMessage) {
-    const res = await HttpService.client.deletePrivateMessage(form);
-    this.findAndUpdateMessage(res);
-  }
-
-  async handleEditMessage(form: EditPrivateMessage): Promise<boolean> {
-    const res = await HttpService.client.editPrivateMessage(form);
-    this.findAndUpdateMessage(res);
-    if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
-    return res.state !== "failed";
-  }
-
-  async handleMarkNotificationAsRead(form: MarkNotificationAsRead) {
-    const res = await HttpService.client.markNotificationAsRead(form);
-    this.setState(s => {
-      if (res.state === "success" && s.notifsRes.state === "success") {
-        s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-          n => {
-            if (n.notification.id !== form.notification_id) {
-              return n;
-            }
-            const updated: NotificationView = {
-              notification: { ...n.notification },
-              data: { ...n.data },
-            };
-            setRead(updated, form.read);
-            return updated;
-          },
-        );
-      }
-      return { notifsRes: s.notifsRes };
-    });
-  }
-
-  async handleMessageReport(form: CreatePrivateMessageReport) {
-    const res = await HttpService.client.createPrivateMessageReport(form);
-    this.reportToast(res);
-  }
-
-  async handleCreateMessage(form: CreatePrivateMessage): Promise<boolean> {
-    const res = await HttpService.client.createPrivateMessage(form);
-    this.setState(s => {
-      if (s.notifsRes.state === "success" && res.state === "success") {
-        s.notifsRes.data.notifications.unshift({
-          // FIXME: maybe just let it disappear, comments do too (own comments don't show in notifs)
-          notification: {
-            id: 0,
-            recipient_id: 0,
-            read: true,
-            published_at: nowBoolean(true) ?? "",
-            kind: "private_message",
-          },
-          data: {
-            type_: "private_message",
-            ...res.data.private_message_view,
-          },
-        });
-      }
-      return s;
-    });
-    if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
-    return res.state !== "failed";
+    await UnreadCounterService.Instance.updateUnreadCounts();
   }
 
   findAndUpdateMessage(res: RequestState<PrivateMessageResponse>) {
     this.setState(s => {
       if (s.notifsRes.state === "success" && res.state === "success") {
-        const notif = s.notifsRes.data.notifications.find(
+        const notif = s.notifsRes.data.items.find(
           n =>
             n.data.type_ === "private_message" &&
             n.data.private_message.id ===
               res.data.private_message_view.private_message.id,
         );
-        s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-          n => {
-            if (n !== notif) {
-              return n;
-            }
-            return {
-              notification: { ...n.notification },
-              data: {
-                type_: "private_message",
-                ...res.data.private_message_view,
-              },
-            };
-          },
-        );
+        s.notifsRes.data.items = s.notifsRes.data.items.map(n => {
+          if (n !== notif) {
+            return n;
+          }
+          return {
+            notification: { ...n.notification },
+            data: {
+              type_: "private_message",
+              ...res.data.private_message_view,
+            },
+          };
+        });
       }
       return s;
     });
@@ -827,31 +538,28 @@ export class Notifications extends Component<
     if (banRes.state === "success") {
       this.setState(s => {
         if (s.notifsRes.state === "success") {
-          s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-            c => {
-              const notif: NotificationView = {
-                notification: { ...c.notification },
-                data: { ...c.data },
-              };
-              switch (notif.data.type_) {
-                case "comment":
-                case "post":
-                  {
-                    if (
-                      notif.data.community.id === communityId &&
-                      notif.data.creator.id ===
-                        banRes.data.person_view.person.id
-                    ) {
-                      notif.data.creator_banned_from_community = banned;
+          s.notifsRes.data.items = s.notifsRes.data.items.map(c => {
+            const notif: NotificationView = {
+              notification: { ...c.notification },
+              data: { ...c.data },
+            };
+            switch (notif.data.type_) {
+              case "comment":
+              case "post":
+                {
+                  if (
+                    notif.data.community.id === communityId &&
+                    notif.data.creator.id === banRes.data.person_view.person.id
+                  ) {
+                    notif.data.creator_banned_from_community = banned;
 
-                      break;
-                    }
+                    break;
                   }
-                  return notif;
-              }
-              return c;
-            },
-          );
+                }
+                return notif;
+            }
+            return c;
+          });
         }
         return { notifsRes: s.notifsRes };
       });
@@ -863,22 +571,20 @@ export class Notifications extends Component<
     if (banRes.state === "success") {
       this.setState(s => {
         if (s.notifsRes.state === "success") {
-          s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-            c => {
-              const notif: NotificationView = {
-                notification: { ...c.notification },
-                data: { ...c.data },
-              };
-              switch (notif.data.type_) {
-                case "comment":
-                case "post": {
-                  notif.data.creator_banned = banned;
-                  break;
-                }
+          s.notifsRes.data.items = s.notifsRes.data.items.map(c => {
+            const notif: NotificationView = {
+              notification: { ...c.notification },
+              data: { ...c.data },
+            };
+            switch (notif.data.type_) {
+              case "comment":
+              case "post": {
+                notif.data.creator_banned = banned;
+                break;
               }
-              return notif;
-            },
-          );
+            }
+            return notif;
+          });
         }
         return { notifsRes: s.notifsRes };
       });
@@ -888,17 +594,8 @@ export class Notifications extends Component<
   purgeItem(purgeRes: RequestState<SuccessResponse>) {
     if (purgeRes.state === "success") {
       toast(I18NextService.i18n.t("purge_success"));
-      this.context.router.history.push(`/`);
-    }
-  }
-
-  reportToast(
-    res: RequestState<PrivateMessageReportResponse | CommentReportResponse>,
-  ) {
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("report_created"));
-    } else if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
+      const context = this.context as RouterContext;
+      context.router.history.push(`/`);
     }
   }
 
@@ -906,72 +603,422 @@ export class Notifications extends Component<
   findAndUpdateComment(res: RequestState<CommentResponse>) {
     this.setState(s => {
       if (s.notifsRes.state === "success" && res.state === "success") {
-        const notif = s.notifsRes.data.notifications.find(
+        const notif = s.notifsRes.data.items.find(
           n =>
             n.data.type_ === "comment" &&
             n.data.comment.id === res.data.comment_view.comment.id,
         );
-        s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-          n => {
-            if (n !== notif) {
-              return n;
-            }
-            return {
-              notification: { ...n.notification },
-              data: { type_: "comment", ...res.data.comment_view },
-            };
-          },
-        );
+        s.notifsRes.data.items = s.notifsRes.data.items.map(n => {
+          if (n !== notif) {
+            return n;
+          }
+          return {
+            notification: { ...n.notification },
+            data: { type_: "comment", ...res.data.comment_view },
+          };
+        });
       }
       return s;
     });
   }
+}
 
-  async handleMarkPostAsRead(form: MarkPostAsRead) {
-    if (this.state.notifsRes.state !== "success") return;
-    const notification = this.state.notifsRes.data.notifications.find(
-      n => n.data.type_ === "post" && n.data.post.id === form.post_id,
-    );
-    if (notification) {
-      await this.handleMarkNotificationAsRead({
-        notification_id: notification.notification.id,
-        read: form.read,
-      });
-    }
+async function handlePageChange(i: Notifications, cursor?: PaginationCursor) {
+  i.setState({ cursor });
+  await i.refetch();
+}
+
+async function handleShowUnreadOnlyChange(
+  i: Notifications,
+  showUnreadOnly: boolean,
+) {
+  i.setState({ showUnreadOnly, cursor: undefined });
+  await i.refetch();
+}
+
+async function handleMessageTypeChange(
+  i: Notifications,
+  val: NotificationTypeFilter,
+) {
+  i.setState({
+    messageType: val,
+    cursor: undefined,
+  });
+  await i.refetch();
+}
+
+async function handleMarkAllAsRead(i: Notifications) {
+  i.setState({ markAllAsReadRes: LOADING_REQUEST });
+
+  const markAllAsReadRes =
+    await HttpService.client.markAllNotificationsAsRead();
+
+  if (markAllAsReadRes.state === "success") {
+    i.setState(s => {
+      if (s.notifsRes.state === "success") {
+        s.notifsRes.data.items = s.notifsRes.data.items.map(nv => {
+          const a = {
+            notification: { ...nv.notification },
+            data: { ...nv.data },
+          };
+          setRead(a, true);
+          return a;
+        });
+      }
+      // Refetch to reload the data
+      return { notifsRes: s.notifsRes, markAllAsReadRes };
+    });
+    await i.refetch();
+  } else {
+    i.setState({ markAllAsReadRes });
+  }
+}
+
+async function handleAddModToCommunity(form: AddModToCommunity) {
+  // TODO not sure what to do here
+  await HttpService.client.addModToCommunity(form);
+}
+
+async function handlePurgePerson(i: Notifications, form: PurgePerson) {
+  const purgePersonRes = await HttpService.client.purgePerson(form);
+  i.purgeItem(purgePersonRes);
+}
+
+async function handlePurgeComment(i: Notifications, form: PurgeComment) {
+  const purgeCommentRes = await HttpService.client.purgeComment(form);
+  i.purgeItem(purgeCommentRes);
+}
+
+async function handleBlockPerson(
+  form: BlockPerson,
+  myUserInfo: MyUserInfo | undefined,
+) {
+  const blockPersonRes = await HttpService.client.blockPerson(form);
+  if (blockPersonRes.state === "success") {
+    updatePersonBlock(blockPersonRes.data, form.block, myUserInfo);
+  }
+}
+
+async function handleBlockCommunity(
+  form: BlockCommunity,
+  myUserInfo: MyUserInfo | undefined,
+) {
+  const blockCommunityRes = await HttpService.client.blockCommunity(form);
+  if (blockCommunityRes.state === "success") {
+    updateCommunityBlock(blockCommunityRes.data, form.block, myUserInfo);
+  }
+}
+
+async function handleCreateComment(i: Notifications, form: CreateComment) {
+  i.setState({
+    createCommentRes: {
+      id: form.parent_id ?? 0,
+      res: LOADING_REQUEST,
+    },
+  });
+  const res = await HttpService.client.createComment(form);
+  i.setState({
+    createCommentRes: {
+      id: form.parent_id ?? 0,
+      res,
+    },
+  });
+
+  if (res.state === "success") {
+    removeLocalStorageMarkdown();
+    toast(I18NextService.i18n.t("reply_sent"));
+    // The reply just disappears. Only replies to private messages appear in the notifs.
   }
 
-  async handlePersonNote(form: NotePerson) {
-    const res = await HttpService.client.notePerson(form);
+  return res;
+}
 
-    if (res.state === "success") {
-      // Update the content lists
-      this.setState(s => {
-        if (s.notifsRes.state === "success") {
-          s.notifsRes.data.notifications = s.notifsRes.data.notifications.map(
-            c => {
-              const notif: NotificationView = {
-                notification: { ...c.notification },
-                data: { ...c.data },
-              };
-              switch (notif.data.type_) {
-                case "post":
-                case "comment":
-                  if (
-                    notif.data.creator.id === form.person_id &&
-                    notif.data.person_actions
-                  ) {
-                    notif.data.person_actions.note = form.note;
-                  }
-                  break;
-              }
-              return notif;
-            },
-          );
+async function handleEditComment(i: Notifications, form: EditComment) {
+  i.setState({
+    editCommentRes: { id: form.comment_id, res: LOADING_REQUEST },
+  });
+
+  const res = await HttpService.client.editComment(form);
+  i.setState({
+    editCommentRes: { id: form.comment_id, res },
+  });
+
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("edit"));
+    i.findAndUpdateComment(res);
+  } else if (res.state === "failed") {
+    toast(res.err.name, "danger");
+  }
+
+  return res;
+}
+
+async function handleDeleteComment(i: Notifications, form: DeleteComment) {
+  const res = await HttpService.client.deleteComment(form);
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("deleted"));
+    i.findAndUpdateComment(res);
+  }
+}
+
+async function handleRemoveComment(i: Notifications, form: RemoveComment) {
+  const res = await HttpService.client.removeComment(form);
+  if (res.state === "success") {
+    toast(
+      I18NextService.i18n.t(
+        form.removed ? "removed_comment" : "restored_comment",
+      ),
+    );
+    i.findAndUpdateComment(res);
+  }
+}
+
+async function handleLockComment(i: Notifications, form: LockComment) {
+  const res = await HttpService.client.lockComment(form);
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t(form.locked ? "locked" : "unlocked"));
+    i.findAndUpdateComment(res);
+  }
+}
+
+async function handleSaveComment(i: Notifications, form: SaveComment) {
+  const res = await HttpService.client.saveComment(form);
+  i.findAndUpdateComment(res);
+}
+
+async function handleCommentVote(i: Notifications, form: CreateCommentLike) {
+  i.setState({ voteCommentRes: { id: form.comment_id, res: LOADING_REQUEST } });
+  const res = await HttpService.client.likeComment(form);
+  i.setState({ voteCommentRes: { id: form.comment_id, res } });
+  i.findAndUpdateComment(res);
+}
+
+async function handleCommentReport(form: CreateCommentReport) {
+  const reportRes = await HttpService.client.createCommentReport(form);
+  reportToast(reportRes);
+}
+
+async function handleDistinguishComment(
+  i: Notifications,
+  form: DistinguishComment,
+) {
+  const res = await HttpService.client.distinguishComment(form);
+  i.findAndUpdateComment(res);
+}
+
+async function handleAddAdmin(i: Notifications, form: AddAdmin) {
+  const addAdminRes = await HttpService.client.addAdmin(form);
+
+  if (addAdminRes.state === "success") {
+    i.setState(s => ((s.siteRes.admins = addAdminRes.data.admins), s));
+  }
+}
+
+async function handleTransferCommunity(form: TransferCommunity) {
+  await HttpService.client.transferCommunity(form);
+  toast(I18NextService.i18n.t("transfer_community"));
+}
+
+async function handleMarkCommentAsRead(
+  i: Notifications,
+  commentId: CommentId,
+  read: boolean,
+) {
+  if (i.state.notifsRes.state !== "success") return;
+  const notification = i.state.notifsRes.data.items.find(
+    n => n.data.type_ === "comment" && n.data.comment.id === commentId,
+  );
+  if (notification) {
+    i.setState({
+      markCommentReadLoadingRes: { id: commentId, res: LOADING_REQUEST },
+    });
+    const res = await handleMarkNotificationAsRead(i, {
+      notification_id: notification.notification.id,
+      read,
+    });
+    i.setState({ markCommentReadLoadingRes: { id: commentId, res } });
+  }
+}
+
+async function handleMarkMessageAsRead(
+  i: Notifications,
+  privateMessageId: PrivateMessageId,
+  read: boolean,
+) {
+  const notification =
+    i.state.notifsRes.state === "success" &&
+    i.state.notifsRes.data.items.find(
+      n =>
+        n.data.type_ === "private_message" &&
+        n.data.private_message.id === privateMessageId,
+    );
+
+  if (notification) {
+    i.setState({
+      privateMessageReadRes: { id: privateMessageId, res: LOADING_REQUEST },
+    });
+    const res = await handleMarkNotificationAsRead(i, {
+      notification_id: notification.notification.id,
+      read,
+    });
+    i.setState({ privateMessageReadRes: { id: privateMessageId, res } });
+  }
+}
+
+async function handleBanFromCommunity(
+  i: Notifications,
+  form: BanFromCommunity,
+) {
+  const banRes = await HttpService.client.banFromCommunity(form);
+  i.updateBanFromCommunity(banRes, form.community_id, form.ban);
+}
+
+async function handleBanPerson(i: Notifications, form: BanPerson) {
+  const banRes = await HttpService.client.banPerson(form);
+  i.updateBan(banRes, form.ban);
+}
+
+async function handleDeleteMessage(
+  i: Notifications,
+  form: DeletePrivateMessage,
+) {
+  i.setState({
+    privateMessageDeleteRes: {
+      id: form.private_message_id,
+      res: LOADING_REQUEST,
+    },
+  });
+  const res = await HttpService.client.deletePrivateMessage(form);
+  i.setState({ privateMessageDeleteRes: { id: form.private_message_id, res } });
+  i.findAndUpdateMessage(res);
+}
+
+async function handleEditMessage(
+  i: Notifications,
+  form: EditPrivateMessage,
+): Promise<boolean> {
+  i.setState({
+    privateMessageRes: { id: form.private_message_id, res: LOADING_REQUEST },
+  });
+  const res = await HttpService.client.editPrivateMessage(form);
+  i.setState({ privateMessageRes: { id: form.private_message_id, res } });
+
+  i.findAndUpdateMessage(res);
+  if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
+  }
+  return res.state !== "failed";
+}
+
+async function handleMarkNotificationAsRead(
+  i: Notifications,
+  form: MarkNotificationAsRead,
+) {
+  const res = await HttpService.client.markNotificationAsRead(form);
+  i.setState(s => {
+    if (res.state === "success" && s.notifsRes.state === "success") {
+      s.notifsRes.data.items = s.notifsRes.data.items.map(n => {
+        if (n.notification.id !== form.notification_id) {
+          return n;
         }
-        toast(
-          I18NextService.i18n.t(form.note ? "note_created" : "note_deleted"),
-        );
+        const updated: NotificationView = {
+          notification: { ...n.notification },
+          data: { ...n.data },
+        };
+        setRead(updated, form.read);
+        return updated;
       });
     }
+    return { notifsRes: s.notifsRes };
+  });
+  return res;
+}
+
+async function handleMessageReport(form: CreatePrivateMessageReport) {
+  const res = await HttpService.client.createPrivateMessageReport(form);
+  reportToast(res);
+}
+
+async function handleCreateMessage(
+  i: Notifications,
+  form: CreatePrivateMessage,
+): Promise<boolean> {
+  i.setState({ privateMessageRes: { id: 0, res: LOADING_REQUEST } });
+  const res = await HttpService.client.createPrivateMessage(form);
+  i.setState({ privateMessageRes: { id: 0, res } });
+
+  i.setState(s => {
+    if (s.notifsRes.state === "success" && res.state === "success") {
+      s.notifsRes.data.items.unshift({
+        // FIXME: maybe just let it disappear, comments do too (own comments don't show in notifs)
+        notification: {
+          id: 0,
+          creator_id: 0,
+          recipient_id: 0,
+          read: true,
+          published_at: nowBoolean(true) ?? "",
+          kind: "private_message",
+        },
+        data: {
+          type_: "private_message",
+          ...res.data.private_message_view,
+        },
+      });
+    }
+    return s;
+  });
+  if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
+  }
+  return res.state !== "failed";
+}
+
+async function handleMarkPostAsRead(i: Notifications, form: MarkPostAsRead) {
+  if (i.state.notifsRes.state !== "success") return;
+  const notification = i.state.notifsRes.data.items.find(
+    n => n.data.type_ === "post" && n.data.post.id === form.post_id,
+  );
+  if (notification) {
+    i.setState({
+      markPostReadLoadingRes: { id: form.post_id, res: LOADING_REQUEST },
+    });
+    const res = await handleMarkNotificationAsRead(i, {
+      notification_id: notification.notification.id,
+      read: form.read,
+    });
+    i.setState({
+      markPostReadLoadingRes: { id: form.post_id, res },
+    });
+  }
+}
+
+async function handlePersonNote(i: Notifications, form: NotePerson) {
+  const res = await HttpService.client.notePerson(form);
+
+  if (res.state === "success") {
+    // Update the content lists
+    i.setState(s => {
+      if (s.notifsRes.state === "success") {
+        s.notifsRes.data.items = s.notifsRes.data.items.map(c => {
+          const notif: NotificationView = {
+            notification: { ...c.notification },
+            data: { ...c.data },
+          };
+          switch (notif.data.type_) {
+            case "post":
+            case "comment":
+              if (
+                notif.data.creator.id === form.person_id &&
+                notif.data.person_actions
+              ) {
+                notif.data.person_actions.note = form.note;
+              }
+              break;
+          }
+          return notif;
+        });
+      }
+      toast(I18NextService.i18n.t(form.note ? "note_created" : "note_deleted"));
+    });
   }
 }

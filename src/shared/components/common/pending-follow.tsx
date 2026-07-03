@@ -1,4 +1,3 @@
-import { Component, InfernoNode } from "inferno";
 import {
   ApproveCommunityPendingFollower,
   MyUserInfo,
@@ -8,107 +7,80 @@ import { I18NextService } from "../../services";
 import { PersonListing } from "../person/person-listing";
 import { Spinner } from "./icon";
 import { UserBadges } from "./user-badges";
-import { linkEvent } from "inferno";
+import { CommunityLink } from "@components/community/community-link";
 
 interface PendingFollowProps {
   pending_follow: PendingFollowView;
   myUserInfo: MyUserInfo | undefined;
-  onApproveFollower(form: ApproveCommunityPendingFollower): void;
+  loading: boolean;
+  onApproveFollower: (form: ApproveCommunityPendingFollower) => void;
 }
 
-interface PendingFollowState {
-  approveLoading: boolean;
-  denyLoading: boolean;
-}
+export function PendingFollow(props: PendingFollowProps) {
+  const { pending_follow: p, myUserInfo, loading } = props;
 
-export class PendingFollow extends Component<
-  PendingFollowProps,
-  PendingFollowState
-> {
-  state: PendingFollowState = {
-    approveLoading: false,
-    denyLoading: false,
-  };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-  componentWillReceiveProps(
-    nextProps: Readonly<{ children?: InfernoNode } & PendingFollowProps>,
-  ): void {
-    if (this.props !== nextProps) {
-      this.setState({
-        approveLoading: false,
-        denyLoading: false,
-      });
-    }
-  }
-
-  render() {
-    const p = this.props.pending_follow;
-    return (
-      <div className="mb-3 row align-items-center">
-        <span className="col col-md-3">
-          <PersonListing
-            person={p.person}
-            banned={false}
-            showApubName
-            myUserInfo={this.props.myUserInfo}
-          />
-          <UserBadges
-            classNames="ms-1"
-            myUserInfo={this.props.myUserInfo}
-            creator={p.person}
-            showCounts
-          />
-        </span>
-        <span className="col">
-          {p.follow_state === "approval_required" && (
-            <>
+  return (
+    <div className="mb-3 row align-items-center">
+      <span className="col">
+        <PersonListing
+          person={p.person}
+          banned={false}
+          showApubName
+          myUserInfo={myUserInfo}
+          muted={false}
+        />
+        <UserBadges
+          classNames="ms-1"
+          myUserInfo={myUserInfo}
+          creator={p.person}
+          showCounts
+        />{" "}
+        {I18NextService.i18n.t("to")}{" "}
+        <CommunityLink
+          community={p.community}
+          myUserInfo={myUserInfo}
+          muted={false}
+        />
+      </span>
+      <span className="col">
+        {(p.follow_state === "approval_required" ||
+          p.follow_state === "denied") && (
+          <>
+            <button
+              className="btn btn-light border-light-subtle me-2 my-2"
+              onClick={() => handleApprove(props)}
+              aria-label={I18NextService.i18n.t("approve")}
+            >
+              {loading ? <Spinner /> : I18NextService.i18n.t("approve")}
+            </button>
+            {p.follow_state === "approval_required" && (
               <button
-                className="btn btn-secondary me-2 my-2"
-                onClick={linkEvent(this, this.handleApprove)}
-                aria-label={I18NextService.i18n.t("approve")}
-              >
-                {this.state.approveLoading ? (
-                  <Spinner />
-                ) : (
-                  I18NextService.i18n.t("approve")
-                )}
-              </button>
-              <button
-                className="btn btn-secondary me-2"
-                onClick={linkEvent(this, this.handleDeny)}
+                className="btn btn-light border-light-subtle me-2"
+                onClick={() => handleDeny(props)}
                 aria-label={I18NextService.i18n.t("deny")}
               >
-                {this.state.denyLoading ? (
-                  <Spinner />
-                ) : (
-                  I18NextService.i18n.t("deny")
-                )}
+                {loading ? <Spinner /> : I18NextService.i18n.t("deny")}
               </button>
-            </>
-          )}
-        </span>
-      </div>
-    );
-  }
+            )}
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
 
-  handleApprove(i: PendingFollow) {
-    i.setState({ approveLoading: true });
-    i.props.onApproveFollower({
-      follower_id: i.props.pending_follow.person.id,
-      community_id: i.props.pending_follow.community.id,
-      approve: true,
-    });
-  }
+function handleApprove(i: PendingFollowProps) {
+  i.onApproveFollower({
+    follower_id: i.pending_follow.person.id,
+    community_id: i.pending_follow.community.id,
+    approve: true,
+  });
+}
 
-  handleDeny(i: PendingFollow) {
-    i.setState({ denyLoading: true });
-    i.props.onApproveFollower({
-      follower_id: i.props.pending_follow.person.id,
-      community_id: i.props.pending_follow.community.id,
-      approve: false,
-    });
-  }
+function handleDeny(i: PendingFollowProps) {
+  i.onApproveFollower({
+    follower_id: i.pending_follow.person.id,
+    community_id: i.pending_follow.community.id,
+    approve: false,
+  });
 }

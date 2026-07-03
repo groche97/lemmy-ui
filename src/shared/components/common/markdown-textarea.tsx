@@ -3,7 +3,7 @@ import { numToSI, randomStr } from "@utils/helpers";
 import autosize from "autosize";
 import classNames from "classnames";
 import { NoOptionI18nKeys } from "i18next";
-import { Component, linkEvent } from "inferno";
+import { Component, FormEvent } from "inferno";
 import { createElement } from "inferno-create-element";
 import { Prompt } from "inferno-router";
 import { Language, LanguageId, MyUserInfo } from "lemmy-js-client";
@@ -14,7 +14,12 @@ import {
   maxUploadImages,
   relTags,
 } from "@utils/config";
-import { customEmojisLookup, mdToHtml, setupTribute } from "@utils/markdown";
+import {
+  customEmojisLookup,
+  EmojiEvent,
+  mdToHtml,
+  setupTribute,
+} from "@utils/markdown";
 import { HttpService, I18NextService } from "@services/index";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import { userNotLoggedInOrBanned, pictrsDeleteToast, toast } from "@utils/app";
@@ -23,6 +28,10 @@ import { Icon, Spinner } from "./icon";
 import { LanguageSelect } from "./language-select";
 import ProgressBar from "./progress-bar";
 import { validURL } from "@utils/helpers";
+import { createRef, RefObject } from "inferno";
+
+const LOCAL_STORAGE_KEY = "lemmy-markdown";
+
 interface MarkdownTextAreaProps {
   /**
    * Initial content inside the textarea
@@ -47,14 +56,16 @@ interface MarkdownTextAreaProps {
    */
   showLanguage?: boolean;
   hideNavigationWarnings?: boolean;
-  onContentChange?(val: string): void;
-  onContentBlur?(val: string): void;
-  onReplyCancel?(): void;
-  onSubmit?(content: string, languageId?: number): void;
+  onContentChange?: (val: string) => void;
+  onContentBlur?: (val: string) => void;
+  onReplyCancel?: () => void;
+  onSubmit?: (content: string, languageId?: number) => void;
   allLanguages?: Language[];
   siteLanguages?: LanguageId[];
   renderAsDiv?: boolean;
   myUserInfo: MyUserInfo | undefined;
+  loading?: boolean;
+  imageUploadDisabled: boolean;
 }
 
 interface ImageUploadStatus {
@@ -63,12 +74,12 @@ interface ImageUploadStatus {
 }
 
 interface MarkdownTextAreaState {
+  id: string;
+  formId: string;
   content?: string;
   languageId?: number;
   previewMode: boolean;
   imageUploadStatus?: ImageUploadStatus;
-  loading: boolean;
-  submitted: boolean;
 }
 
 @tippyMixin
@@ -76,30 +87,25 @@ export class MarkdownTextArea extends Component<
   MarkdownTextAreaProps,
   MarkdownTextAreaState
 > {
-  private id = `markdown-textarea-${randomStr()}`;
-  private formId = `markdown-form-${randomStr()}`;
-
+  textAreaRef: RefObject<HTMLTextAreaElement> = createRef();
   state: MarkdownTextAreaState = {
-    content: this.props.initialContent,
+    id: `markdown-textarea-${randomStr()}`,
+    formId: `markdown-form-${randomStr()}`,
+    content: undefined,
     languageId: this.props.initialLanguageId,
     previewMode: false,
-    loading: false,
-    submitted: false,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-
-    this.handleLanguageChange = this.handleLanguageChange.bind(this);
-    this.handleEmoji = this.handleEmoji.bind(this);
-    this.handleInsertLink = this.handleInsertLink.bind(this);
-  }
 
   async componentDidMount() {
     if (isBrowser()) {
       const tribute = await setupTribute();
-      const textarea: any = document.getElementById(this.id);
+      const textarea = this.textAreaRef.current;
       if (textarea) {
+        const content: string | undefined =
+          this.props.initialContent ??
+          localStorage.getItem(LOCAL_STORAGE_KEY) ??
+          undefined;
+        this.setState({ content });
         autosize(textarea);
         tribute.attach(textarea);
         textarea.addEventListener("tribute-replaced", () => {
@@ -107,7 +113,7 @@ export class MarkdownTextArea extends Component<
           autosize.update(textarea);
         });
 
-        this.quoteInsert();
+        handleQuoteInsert(this);
 
         if (this.props.focus) {
           textarea.focus();
@@ -118,25 +124,24 @@ export class MarkdownTextArea extends Component<
 
   render() {
     const languageId = this.state.languageId;
+    const fileUploadRef = createRef<HTMLInputElement>();
     return createElement(
       this.props.renderAsDiv ? "div" : "form",
       {
         className: "markdown-textarea",
-        id: this.formId,
-        onSubmit: this.props.renderAsDiv
-          ? undefined
-          : linkEvent(this, this.handleSubmit),
+        id: this.state.formId,
+        onSubmit: (e: KeyboardEvent) =>
+          this.props.renderAsDiv ? undefined : handleSubmit(this, e),
       },
       <>
         <Prompt
           message={I18NextService.i18n.t("block_leaving")}
           when={
             !this.props.hideNavigationWarnings &&
-            ((!!this.state.content && !this.state.submitted) ||
-              this.state.loading)
+            (!!this.state.content || this.props.loading)
           }
         />
-        <div className="mb-3 row">
+        <div className="row mb-2">
           <div className="col-12">
             <div className="rounded bg-light border">
               {!this.state.previewMode && (
@@ -145,60 +150,72 @@ export class MarkdownTextArea extends Component<
                     "no-click": this.isDisabled,
                   })}
                 >
-                  {this.getFormatButton("bold", this.handleInsertBold)}
-                  {this.getFormatButton("italic", this.handleInsertItalic)}
-                  {this.getFormatButton("link", this.handleInsertLink)}
-                  <EmojiPicker onEmojiClick={this.handleEmoji}></EmojiPicker>
-                  <label
-                    htmlFor={`file-upload-${this.id}`}
-                    className={classNames("mb-0", {
-                      pointer: this.props.myUserInfo,
-                    })}
-                    data-tippy-content={I18NextService.i18n.t("upload_image")}
-                  >
-                    {this.state.imageUploadStatus ? (
-                      <Spinner />
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-link rounded-0 text-muted mb-0"
-                        onClick={() => {
-                          document
-                            .getElementById(`file-upload-${this.id}`)
-                            ?.click();
-                        }}
+                  {this.getFormatButton("bold", () => handleInsertBold(this))}
+                  {this.getFormatButton("italic", () =>
+                    handleInsertItalic(this),
+                  )}
+                  {this.getFormatButton("link", () => handleInsertLink(this))}
+                  <EmojiPicker
+                    onEmojiClick={emoji => handleEmoji(this, emoji)}
+                  ></EmojiPicker>
+                  {!this.props.imageUploadDisabled && (
+                    <>
+                      <label
+                        htmlFor={`file-upload-${this.state.id}`}
+                        className={classNames("mb-0", {
+                          pointer: this.props.myUserInfo,
+                        })}
+                        data-tippy-content={I18NextService.i18n.t(
+                          "upload_image",
+                        )}
                       >
-                        <Icon icon="image" classes="icon-inline" />
-                      </button>
-                    )}
-                  </label>
-                  <input
-                    id={`file-upload-${this.id}`}
-                    type="file"
-                    accept="image/*,video/*"
-                    name="file"
-                    className="d-none"
-                    multiple
-                    disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
-                    onChange={linkEvent(this, this.handleImageUpload)}
-                  />
-                  {this.getFormatButton("header", this.handleInsertHeader)}
-                  {this.getFormatButton(
-                    "strikethrough",
-                    this.handleInsertStrikethrough,
+                        {this.state.imageUploadStatus ? (
+                          <Spinner />
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-link rounded-0 text-muted mb-0"
+                            onClick={() => {
+                              fileUploadRef.current?.click();
+                            }}
+                          >
+                            <Icon icon="image" classes="icon-inline" />
+                          </button>
+                        )}
+                      </label>
+                      <input
+                        id={`file-upload-${this.state.id}`}
+                        ref={fileUploadRef}
+                        type="file"
+                        accept="image/*,video/*"
+                        name="file"
+                        className="d-none"
+                        multiple
+                        disabled={userNotLoggedInOrBanned(
+                          this.props.myUserInfo,
+                        )}
+                        onChange={e => handleImageUpload(this, e)}
+                      />
+                    </>
                   )}
-                  {this.getFormatButton("quote", this.handleInsertQuote)}
-                  {this.getFormatButton("list", this.handleInsertList)}
-                  {this.getFormatButton("code", this.handleInsertCode)}
-                  {this.getFormatButton(
-                    "subscript",
-                    this.handleInsertSubscript,
+                  {this.getFormatButton("header", () =>
+                    handleInsertHeader(this),
                   )}
-                  {this.getFormatButton(
-                    "superscript",
-                    this.handleInsertSuperscript,
+                  {this.getFormatButton("strikethrough", () =>
+                    handleInsertStrikethrough(this),
                   )}
-                  {this.getFormatButton("spoiler", this.handleInsertSpoiler)}
+                  {this.getFormatButton("quote", () => handleInsertQuote(this))}
+                  {this.getFormatButton("list", () => handleInsertList(this))}
+                  {this.getFormatButton("code", () => handleInsertCode(this))}
+                  {this.getFormatButton("subscript", () =>
+                    handleInsertSubscript(this),
+                  )}
+                  {this.getFormatButton("superscript", () =>
+                    handleInsertSuperscript(this),
+                  )}
+                  {this.getFormatButton("spoiler", () =>
+                    handleInsertSpoiler(this),
+                  )}
                   <a
                     href={markdownHelpUrl}
                     className="btn btn-sm btn-link rounded-0 text-muted fw-bold"
@@ -212,7 +229,8 @@ export class MarkdownTextArea extends Component<
               )}
               <div>
                 <textarea
-                  id={this.id}
+                  id={this.state.id}
+                  ref={this.textAreaRef}
                   className={classNames(
                     "form-control border-0 rounded-top-0 rounded-bottom",
                     {
@@ -220,10 +238,9 @@ export class MarkdownTextArea extends Component<
                     },
                   )}
                   value={this.state.content}
-                  onInput={linkEvent(this, this.handleContentChange)}
-                  onBlur={linkEvent(this, this.handleContentBlur)}
-                  onPaste={linkEvent(this, this.handlePaste)}
-                  onKeyDown={linkEvent(this, this.handleKeyBinds)}
+                  onInput={e => handleContentChange(this, e)}
+                  onPaste={e => handlePaste(this, e)}
+                  onKeyDown={e => handleKeyBinds(this, e)}
                   required
                   disabled={this.isDisabled}
                   rows={2}
@@ -250,7 +267,7 @@ export class MarkdownTextArea extends Component<
                       value={this.state.imageUploadStatus.uploaded}
                       max={this.state.imageUploadStatus.total}
                       text={
-                        I18NextService.i18n.t("pictures_uploaded_progess", {
+                        I18NextService.i18n.t("pictures_uploaded_progress", {
                           uploaded: this.state.imageUploadStatus.uploaded,
                           total: this.state.imageUploadStatus.total,
                         }) ?? undefined
@@ -258,62 +275,71 @@ export class MarkdownTextArea extends Component<
                     />
                   )}
               </div>
-              <label className="visually-hidden" htmlFor={this.id}>
+              <label className="visually-hidden" htmlFor={this.state.id}>
                 {I18NextService.i18n.t("body")}
               </label>
             </div>
           </div>
+        </div>
 
-          <div className="col-12 d-flex align-items-center flex-wrap mt-2">
-            {this.props.buttonTitle && (
+        <div className="row row-cols-auto align-items-center g-2 g-sm-3 mb-2 mb-sm-2">
+          {this.props.buttonTitle && (
+            <div className="col">
               <button
                 type="submit"
-                className="btn btn-sm btn-secondary ms-2"
+                className="btn btn-sm btn-light border-light-subtle"
                 disabled={this.isDisabled || !this.state.content}
               >
-                {this.state.loading && <Spinner className="me-1" />}
+                {this.props.loading && <Spinner className="me-1" />}
                 {this.props.buttonTitle}
               </button>
-            )}
+            </div>
+          )}
+          <div className="col">
             <button
               type="button"
               disabled={!this.state.content}
-              className={classNames("btn btn-sm btn-secondary ms-2", {
-                active: this.state.previewMode,
-              })}
-              onClick={linkEvent(this, this.handlePreviewToggle)}
+              className={classNames(
+                "btn btn-sm btn-light border-light-subtle",
+                {
+                  active: this.state.previewMode,
+                },
+              )}
+              onClick={() => handlePreviewToggle(this)}
             >
               {this.state.previewMode
                 ? I18NextService.i18n.t("edit")
                 : I18NextService.i18n.t("preview")}
             </button>
-            {this.props.replyType && (
+          </div>
+          {this.props.replyType && (
+            <div className="col">
               <button
                 type="button"
-                className="btn btn-sm btn-secondary ms-2"
-                onClick={linkEvent(this, this.handleReplyCancel)}
+                className="btn btn-sm btn-light border-light-subtle"
+                onClick={() => handleReplyCancel(this)}
               >
                 {I18NextService.i18n.t("cancel")}
               </button>
-            )}
+            </div>
+          )}
 
-            {/* A flex expander */}
-            <div className="flex-grow-1"></div>
-
-            {this.props.showLanguage && (
+          {this.props.showLanguage && (
+            <div className="col ms-auto">
               <LanguageSelect
+                multiple={false}
                 iconVersion
                 allLanguages={this.props.allLanguages}
                 selectedLanguageIds={
                   languageId ? Array.of(languageId) : undefined
                 }
                 siteLanguages={this.props.siteLanguages}
-                onChange={this.handleLanguageChange}
+                onChange={val => handleLanguageChange(this, val)}
                 disabled={this.isDisabled}
                 myUserInfo={this.props.myUserInfo}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </>,
     );
@@ -321,7 +347,7 @@ export class MarkdownTextArea extends Component<
 
   getFormatButton(
     type: NoOptionI18nKeys,
-    handleClick: (i: MarkdownTextArea, event: any) => void,
+    handleClick: (i: MarkdownTextArea) => void,
   ) {
     let iconType: string;
 
@@ -344,437 +370,22 @@ export class MarkdownTextArea extends Component<
         className="btn btn-sm btn-link rounded-0 text-muted"
         data-tippy-content={I18NextService.i18n.t(type)}
         aria-label={I18NextService.i18n.t(type)}
-        onClick={linkEvent(this, handleClick)}
+        onClick={e => {
+          e.preventDefault();
+          handleClick(this);
+        }}
       >
         <Icon icon={iconType} classes="icon-inline" />
       </button>
     );
   }
 
-  handleEmoji(e: any) {
-    let value = e.native;
-    if (!value) {
-      const emoji = customEmojisLookup.get(e.id)?.custom_emoji;
-      if (emoji) {
-        value = `![${emoji.alt_text}](${emoji.image_url} "emoji ${emoji.shortcode}")`;
-      }
-    }
-    this.insertAtCursor(value);
-  }
-
-  handlePaste(i: MarkdownTextArea, event: ClipboardEvent) {
-    if (!event.clipboardData) return;
-
-    // check clipboard files
-    const image = event.clipboardData.files[0];
-    if (image) {
-      i.handleImageUpload(i, image);
-      return;
-    }
-
-    // check clipboard url
-    const url = event.clipboardData.getData("text");
-    if (validURL(url)) {
-      i.handleUrlPaste(url, i, event);
-    }
-  }
-
-  handleUrlPaste(url: string, i: MarkdownTextArea, event: ClipboardEvent) {
-    // query textarea element
-    const textarea = document.getElementById(i.id);
-
-    if (textarea instanceof HTMLTextAreaElement) {
-      const { selectionStart, selectionEnd } = textarea;
-
-      // if no selection, just insert url
-      if (selectionStart === selectionEnd) return;
-
-      event.preventDefault();
-      const selectedText = i.getSelectedText();
-
-      // update textarea content
-      i.setState(({ content }) => ({
-        content: `${
-          content?.substring(0, selectionStart) ?? ""
-        }[${selectedText}](${url})${content?.substring(selectionEnd) ?? ""}`,
-      }));
-      i.contentChange();
-
-      // shift selection 1 to the right
-      textarea.setSelectionRange(
-        selectionStart + 1,
-        selectionStart + 1 + selectedText.length,
-      );
-    }
-  }
-
-  handleImageUpload(i: MarkdownTextArea, event: any) {
-    const files: File[] = [];
-    if (event.target) {
-      event.preventDefault();
-      files.push(...event.target.files);
-    } else {
-      files.push(event);
-    }
-
-    if (files.length > maxUploadImages) {
-      toast(
-        I18NextService.i18n.t("too_many_images_upload", {
-          count: Number(maxUploadImages),
-          formattedCount: numToSI(maxUploadImages),
-        }),
-        "danger",
-      );
-    } else {
-      i.setState({
-        imageUploadStatus: { total: files.length, uploaded: 0 },
-      });
-
-      i.uploadImages(i, files).then(() => {
-        i.setState({ imageUploadStatus: undefined });
-      });
-    }
-  }
-
-  async uploadImages(i: MarkdownTextArea, files: File[]) {
-    let errorOccurred = false;
-    const filesCopy = [...files];
-    while (filesCopy.length > 0 && !errorOccurred) {
-      try {
-        await Promise.all(
-          filesCopy.splice(0, concurrentImageUpload).map(async file => {
-            await i.uploadSingleImage(i, file);
-
-            this.setState(({ imageUploadStatus }) => ({
-              imageUploadStatus: {
-                ...(imageUploadStatus as Required<ImageUploadStatus>),
-                uploaded: (imageUploadStatus?.uploaded ?? 0) + 1,
-              },
-            }));
-          }),
-        );
-      } catch {
-        errorOccurred = true;
-      }
-    }
-  }
-
-  async uploadSingleImage(i: MarkdownTextArea, image: File) {
-    const res = await HttpService.client.uploadImage({ image });
-    if (res.state === "success") {
-      const imageMarkdown = `![](${res.data.image_url})`;
-      this.insertAtCursor(imageMarkdown);
-
-      pictrsDeleteToast(res.data.filename);
-    } else if (res.state === "failed") {
-      i.setState({ imageUploadStatus: undefined });
-      console.error(res.err.name);
-      toast(res.err.name, "danger");
-
-      throw res.err;
-    }
-  }
-
-  // Insert the given string at the current cursor position. By default the cursor is
-  // placed right after the newly inserted text, but this can be changed with
-  // `cursorOffset`.
-  insertAtCursor(text: string, cursorOffset: number = 0) {
-    const textarea: HTMLTextAreaElement = document.getElementById(
-      this.id,
-    ) as HTMLTextAreaElement;
-    const cursorPosition = textarea.selectionStart;
-
-    this.setState(({ content }) => {
-      const currentContent = content ?? "";
-      return {
-        content:
-          currentContent.slice(0, cursorPosition) +
-          text +
-          currentContent.slice(cursorPosition),
-      };
-    });
-    this.contentChange();
-    // Update cursor position to after the inserted image link
-    setTimeout(() => {
-      textarea.selectionStart = cursorPosition + text.length + cursorOffset;
-      textarea.selectionEnd = cursorPosition + text.length + cursorOffset;
-      textarea.focus();
-      autosize.update(textarea);
-    }, 10);
-  }
-
-  contentChange() {
-    // Coerces the undefineds to empty strings, for replacing in the DB
-    const content = this.state.content ?? "";
-    this.props.onContentChange?.(content);
-  }
-
-  handleContentChange(i: MarkdownTextArea, event: any) {
-    i.setState({ content: event.target.value });
-    i.contentChange();
-  }
-
-  handleContentBlur(i: MarkdownTextArea, event: any) {
-    i.props.onContentBlur?.(event.target.value);
-  }
-
-  // Keybind handler
-  // Keybinds inspired by github comment area
-  handleKeyBinds(i: MarkdownTextArea, event: KeyboardEvent) {
-    if (platform.isMac() ? event.metaKey : event.ctrlKey) {
-      switch (event.key) {
-        case "k": {
-          i.handleInsertLink(i, event);
-          break;
-        }
-        case "Enter": {
-          if (!i.isDisabled) {
-            i.handleSubmit(i, event);
-          }
-
-          break;
-        }
-        case "b": {
-          i.handleInsertBold(i, event);
-          break;
-        }
-        case "i": {
-          i.handleInsertItalic(i, event);
-          break;
-        }
-        case "e": {
-          i.handleInsertCode(i, event);
-          break;
-        }
-        case "8": {
-          i.handleInsertList(i, event);
-          break;
-        }
-        case "s": {
-          i.handleInsertSpoiler(i, event);
-          break;
-        }
-        case "p": {
-          if (i.state.content) i.handlePreviewToggle(i, event);
-          break;
-        }
-        case ".": {
-          i.handleInsertQuote(i, event);
-          break;
-        }
-      }
-    }
-  }
-
-  handlePreviewToggle(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.setState({ previewMode: !i.state.previewMode });
-  }
-
-  handleLanguageChange(val: number[]) {
-    this.setState({ languageId: val[0] });
-  }
-
-  handleSubmit(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    if (i.state.content) {
-      i.setState({ loading: true, submitted: true });
-      i.props.onSubmit?.(i.state.content, i.state.languageId);
-      i.setState({ loading: false });
-    }
-  }
-
-  handleReplyCancel(i: MarkdownTextArea) {
-    i.props.onReplyCancel?.();
-  }
-
-  handleInsertLink(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-
-    const textarea: any = document.getElementById(i.id);
-    const start: number = textarea.selectionStart;
-    const end: number = textarea.selectionEnd;
-
-    const content = i.state.content ?? "";
-
-    if (!i.state.content) {
-      i.setState({ content: "" });
-    }
-
-    if (start !== end) {
-      const selectedText = content?.substring(start, end);
-      i.setState({
-        content: `${content?.substring(
-          0,
-          start,
-        )}[${selectedText}]()${content?.substring(end)}`,
-      });
-      textarea.focus();
-      setTimeout(() => (textarea.selectionEnd = end + 3), 10);
-    } else {
-      this.insertAtCursor("[]()", -3);
-    }
-    i.contentChange();
-  }
-
-  simpleSurround(chars: string) {
-    this.simpleSurroundBeforeAfter(chars, chars);
-  }
-
-  simpleBeginningofLine(chars: string) {
-    this.simpleSurroundBeforeAfter(`${chars}`, "", "");
-  }
-
-  simpleSurroundBeforeAfter(
-    beforeChars: string,
-    afterChars: string,
-    emptyChars = "___",
-  ) {
-    const content = this.state.content ?? "";
-    if (!this.state.content) {
-      this.setState({ content: "" });
-    }
-    const textarea: any = document.getElementById(this.id);
-    const start: number = textarea.selectionStart;
-    const end: number = textarea.selectionEnd;
-
-    if (start !== end) {
-      const selectedText = content?.substring(start, end);
-      this.setState({
-        content: `${content?.substring(
-          0,
-          start,
-        )}${beforeChars}${selectedText}${afterChars}${content?.substring(end)}`,
-      });
-    } else {
-      this.setState({
-        content: `${content}${beforeChars}${emptyChars}${afterChars}`,
-      });
-    }
-    this.contentChange();
-
-    textarea.focus();
-
-    if (start !== end) {
-      textarea.setSelectionRange(
-        start + beforeChars.length,
-        end + afterChars.length,
-      );
-    } else {
-      textarea.setSelectionRange(
-        start + beforeChars.length,
-        end + emptyChars.length + afterChars.length,
-      );
-    }
-
-    setTimeout(() => {
-      autosize.update(textarea);
-    }, 10);
-  }
-
-  handleInsertBold(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleSurround("**");
-  }
-
-  handleInsertItalic(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleSurround("*");
-  }
-
-  handleInsertCode(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    if (i.getSelectedText().split(/\r*\n/).length > 1) {
-      i.simpleSurroundBeforeAfter("```\n", "\n```");
-    } else {
-      i.simpleSurround("`");
-    }
-  }
-
-  handleInsertStrikethrough(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleSurround("~~");
-  }
-
-  handleInsertList(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleBeginningofLine(`-${i.getSelectedText() ? " " : ""}`);
-  }
-
-  handleInsertQuote(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleBeginningofLine(">");
-  }
-
-  handleInsertHeader(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleBeginningofLine("#");
-  }
-
-  handleInsertSubscript(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleSurround("~");
-  }
-
-  handleInsertSuperscript(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    i.simpleSurround("^");
-  }
-
-  simpleInsert(chars: string) {
-    const content = this.state.content;
-    if (!content) {
-      this.setState({ content: `${chars} ` });
-    } else {
-      this.setState({
-        content: `${content}\n${chars} `,
-      });
-    }
-
-    const textarea: any = document.getElementById(this.id);
-    textarea.focus();
-    setTimeout(() => {
-      autosize.update(textarea);
-    }, 10);
-    this.contentChange();
-  }
-
-  handleInsertSpoiler(i: MarkdownTextArea, event: any) {
-    event.preventDefault();
-    const beforeChars = `\n::: spoiler ${I18NextService.i18n.t("spoiler")}\n`;
-    const afterChars = "\n:::\n";
-    i.simpleSurroundBeforeAfter(beforeChars, afterChars);
-  }
-
-  quoteInsert() {
-    const textarea: any = document.getElementById(this.id);
-    const selectedText = window.getSelection()?.toString();
-    let { content } = this.state;
-    if (selectedText) {
-      const quotedText =
-        selectedText
-          .split("\n")
-          .map(t => `> ${t}`)
-          .join("\n") + "\n\n";
-
-      if (!content) {
-        content = "";
-      } else {
-        content = `${content}\n\n`;
-      }
-
-      this.setState({
-        content: `${content}${quotedText}`,
-      });
-      this.contentChange();
-      // Not sure why this needs a delay
-      setTimeout(() => autosize.update(textarea), 10);
-    }
-  }
-
   getSelectedText(): string {
-    const { selectionStart: start, selectionEnd: end } =
-      document.getElementById(this.id) as any;
+    const textarea = this.textAreaRef.current;
+    if (!textarea) {
+      return "";
+    }
+    const { selectionStart: start, selectionEnd: end } = textarea;
     return start !== end
       ? (this.state.content?.substring(start, end) ?? "")
       : "";
@@ -782,9 +393,438 @@ export class MarkdownTextArea extends Component<
 
   get isDisabled() {
     return (
-      this.state.loading ||
+      this.props.loading ||
       this.props.disabled ||
       !!this.state.imageUploadStatus
     );
   }
+}
+
+function handleEmoji(i: MarkdownTextArea, e: EmojiEvent) {
+  let value = e.native;
+  if (!value) {
+    const emoji = customEmojisLookup.get(e.id)?.custom_emoji;
+    if (emoji) {
+      value = `![${emoji.alt_text}](${emoji.image_url} "emoji ${emoji.shortcode}")`;
+    }
+  }
+  handleInsertAtCursor(i, value);
+}
+
+async function handlePaste(i: MarkdownTextArea, event: ClipboardEvent) {
+  if (!event.clipboardData || i.props.imageUploadDisabled) return;
+
+  // check clipboard files
+  const image = event.clipboardData.files[0];
+  if (image) {
+    await handleImageUpload(i, image);
+    return;
+  }
+
+  // check clipboard url
+  const url = event.clipboardData.getData("text");
+  if (validURL(url)) {
+    handleUrlPaste(i, url, event);
+  }
+}
+
+function handleUrlPaste(
+  i: MarkdownTextArea,
+  url: string,
+  event: ClipboardEvent,
+) {
+  const textarea = i.textAreaRef.current;
+
+  if (textarea) {
+    const { selectionStart, selectionEnd } = textarea;
+
+    // if no selection, just insert url
+    if (selectionStart === selectionEnd) return;
+
+    event.preventDefault();
+    const selectedText = i.getSelectedText();
+
+    // update textarea content
+    i.setState(({ content }) => ({
+      content: `${
+        content?.substring(0, selectionStart) ?? ""
+      }[${selectedText}](${url})${content?.substring(selectionEnd) ?? ""}`,
+    }));
+    handleSubmitContentChange(i);
+
+    // shift selection 1 to the right
+    textarea.setSelectionRange(
+      selectionStart + 1,
+      selectionStart + 1 + selectedText.length,
+    );
+  }
+}
+
+async function handleImageUpload(
+  i: MarkdownTextArea,
+  event: File | FormEvent<HTMLInputElement>,
+) {
+  const files: File[] = [];
+  if (event instanceof Event && event.target) {
+    event.preventDefault();
+    const target = event.target;
+    const f = target.files;
+    if (f) {
+      files.push(...Array.from(f));
+    }
+  } else if (event instanceof File) {
+    files.push(event);
+  }
+
+  if (files.length > maxUploadImages) {
+    toast(
+      I18NextService.i18n.t("too_many_images_upload", {
+        count: Number(maxUploadImages),
+        formattedCount: numToSI(maxUploadImages),
+      }),
+      "danger",
+    );
+  } else {
+    i.setState({
+      imageUploadStatus: { total: files.length, uploaded: 0 },
+    });
+
+    await handleUploadImages(i, files).then(() => {
+      i.setState({ imageUploadStatus: undefined });
+    });
+  }
+}
+
+async function handleUploadImages(i: MarkdownTextArea, files: File[]) {
+  let errorOccurred = false;
+  const filesCopy = [...files];
+  while (filesCopy.length > 0 && !errorOccurred) {
+    try {
+      await Promise.all(
+        filesCopy.splice(0, concurrentImageUpload).map(async file => {
+          await handleUploadSingleImage(i, file);
+
+          i.setState(({ imageUploadStatus }) => ({
+            imageUploadStatus: {
+              ...(imageUploadStatus as Required<ImageUploadStatus>),
+              uploaded: (imageUploadStatus?.uploaded ?? 0) + 1,
+            },
+          }));
+        }),
+      );
+    } catch {
+      errorOccurred = true;
+    }
+  }
+}
+
+async function handleUploadSingleImage(i: MarkdownTextArea, image: File) {
+  const res = await HttpService.client.uploadImage({ image });
+  if (res.state === "success") {
+    const imageMarkdown = `![](${res.data.image_url})`;
+    handleInsertAtCursor(i, imageMarkdown);
+
+    pictrsDeleteToast(res.data.filename);
+  } else if (res.state === "failed") {
+    i.setState({ imageUploadStatus: undefined });
+    console.error(res.err.name);
+    toast(res.err.name, "danger");
+
+    throw res.err;
+  }
+}
+
+// Insert the given string at the current cursor position. By default the cursor is
+// placed right after the newly inserted text, but this can be changed with
+// `cursorOffset`.
+function handleInsertAtCursor(
+  i: MarkdownTextArea,
+  text: string,
+  cursorOffset: number = 0,
+) {
+  const textarea = i.textAreaRef.current;
+  if (!textarea) {
+    return;
+  }
+  const cursorPosition = textarea.selectionStart;
+
+  i.setState(({ content }) => {
+    const currentContent = content ?? "";
+    return {
+      content:
+        currentContent.slice(0, cursorPosition) +
+        text +
+        currentContent.slice(cursorPosition),
+    };
+  });
+  handleSubmitContentChange(i);
+  // Update cursor position to after the inserted image link
+  setTimeout(() => {
+    textarea.selectionStart = cursorPosition + text.length + cursorOffset;
+    textarea.selectionEnd = cursorPosition + text.length + cursorOffset;
+    textarea.focus();
+    autosize.update(textarea);
+  }, 10);
+}
+
+function handleSubmitContentChange(i: MarkdownTextArea) {
+  // Coerces the undefineds to empty strings, for replacing in the DB
+  const content = i.state.content ?? "";
+  i.props.onContentChange?.(content);
+}
+
+function handleContentChange(
+  i: MarkdownTextArea,
+  event: FormEvent<HTMLTextAreaElement>,
+) {
+  i.setState({ content: event.target.value });
+  localStorage.setItem(LOCAL_STORAGE_KEY, event.target.value);
+  handleSubmitContentChange(i);
+}
+
+// Keybind handler
+// Keybinds inspired by github comment area
+function handleKeyBinds(i: MarkdownTextArea, event: KeyboardEvent) {
+  if (platform.isMac() ? event.metaKey : event.ctrlKey) {
+    switch (event.key) {
+      case "k": {
+        handleInsertLink(i);
+        break;
+      }
+      case "Enter": {
+        if (!i.isDisabled) {
+          handleSubmit(i, event);
+        }
+
+        break;
+      }
+      case "b": {
+        handleInsertBold(i);
+        break;
+      }
+      case "i": {
+        handleInsertItalic(i);
+        break;
+      }
+      case "e": {
+        handleInsertCode(i);
+        break;
+      }
+      case "8": {
+        handleInsertList(i);
+        break;
+      }
+      case "s": {
+        handleInsertSpoiler(i);
+        break;
+      }
+      case "p": {
+        if (i.state.content) handlePreviewToggle(i);
+        break;
+      }
+      case ".": {
+        handleInsertQuote(i);
+        break;
+      }
+    }
+  }
+}
+
+function handlePreviewToggle(i: MarkdownTextArea) {
+  i.setState({ previewMode: !i.state.previewMode });
+}
+
+function handleLanguageChange(i: MarkdownTextArea, val: number[]) {
+  i.setState({ languageId: val[0] });
+}
+
+function handleSubmit(i: MarkdownTextArea, event: KeyboardEvent) {
+  event.preventDefault();
+  if (i.state.content) {
+    i.props.onSubmit?.(i.state.content, i.state.languageId);
+  }
+}
+
+function handleReplyCancel(i: MarkdownTextArea) {
+  localStorage.removeItem(LOCAL_STORAGE_KEY);
+  i.props.onReplyCancel?.();
+}
+
+function handleInsertLink(i: MarkdownTextArea) {
+  const textarea = i.textAreaRef.current;
+  if (!textarea) {
+    return;
+  }
+  const start: number = textarea.selectionStart;
+  const end: number = textarea.selectionEnd;
+
+  const content = i.state.content ?? "";
+
+  if (!i.state.content) {
+    i.setState({ content: "" });
+  }
+
+  if (start !== end) {
+    const selectedText = content?.substring(start, end);
+    i.setState({
+      content: `${content?.substring(
+        0,
+        start,
+      )}[${selectedText}]()${content?.substring(end)}`,
+    });
+    textarea.focus();
+    setTimeout(() => (textarea.selectionEnd = end + 3), 10);
+  } else {
+    handleInsertAtCursor(i, "[]()", -3);
+  }
+  handleSubmitContentChange(i);
+}
+
+function handleSimpleSurround(i: MarkdownTextArea, chars: string) {
+  handleSimpleSurroundBeforeAfter(i, chars, chars);
+}
+
+function handleSimpleBeginningofLine(i: MarkdownTextArea, chars: string) {
+  handleSimpleSurroundBeforeAfter(i, `${chars}`, "", "");
+}
+
+function handleSimpleSurroundEscapeWords(i: MarkdownTextArea, chars: string) {
+  handleSimpleSurroundBeforeAfter(i, chars, chars, "", true);
+}
+
+function handleSimpleSurroundBeforeAfter(
+  i: MarkdownTextArea,
+  beforeChars: string,
+  afterChars: string,
+  emptyChars = "___",
+  escapeWords = false,
+) {
+  const content = i.state.content ?? "";
+  if (!i.state.content) {
+    i.setState({ content: "" });
+  }
+
+  const textarea = i.textAreaRef.current;
+  if (!textarea) {
+    return;
+  }
+  const start: number = textarea.selectionStart;
+  const end: number = textarea.selectionEnd;
+
+  let escapeSpaces = 0;
+
+  if (start !== end) {
+    let selectedText = content?.substring(start, end);
+
+    if (escapeWords) {
+      escapeSpaces = (selectedText.match(/ /g) || []).length;
+      selectedText = selectedText.replaceAll(" ", "\\ ");
+    }
+
+    i.setState({
+      content: `${content?.substring(
+        0,
+        start,
+      )}${beforeChars}${selectedText}${afterChars}${content?.substring(end)}`,
+    });
+  } else {
+    i.setState({
+      content: `${content}${beforeChars}${emptyChars}${afterChars}`,
+    });
+  }
+  handleSubmitContentChange(i);
+
+  textarea.focus();
+
+  if (start !== end) {
+    textarea.setSelectionRange(
+      start + beforeChars.length,
+      end + afterChars.length + escapeSpaces,
+    );
+  } else {
+    textarea.setSelectionRange(
+      start + beforeChars.length,
+      end + emptyChars.length + afterChars.length + escapeSpaces,
+    );
+  }
+
+  setTimeout(() => {
+    autosize.update(textarea);
+  }, 10);
+}
+
+function handleInsertBold(i: MarkdownTextArea) {
+  handleSimpleSurround(i, "**");
+}
+
+function handleInsertItalic(i: MarkdownTextArea) {
+  handleSimpleSurround(i, "*");
+}
+
+function handleInsertCode(i: MarkdownTextArea) {
+  if (i.getSelectedText().split(/\r*\n/).length > 1) {
+    handleSimpleSurroundBeforeAfter(i, "```\n", "\n```");
+  } else {
+    handleSimpleSurround(i, "`");
+  }
+}
+
+function handleInsertStrikethrough(i: MarkdownTextArea) {
+  handleSimpleSurround(i, "~~");
+}
+
+function handleInsertList(i: MarkdownTextArea) {
+  handleSimpleBeginningofLine(i, `-${i.getSelectedText() ? " " : ""}`);
+}
+
+function handleInsertQuote(i: MarkdownTextArea) {
+  handleSimpleBeginningofLine(i, ">");
+}
+
+function handleInsertHeader(i: MarkdownTextArea) {
+  handleSimpleBeginningofLine(i, "#");
+}
+
+function handleInsertSubscript(i: MarkdownTextArea) {
+  handleSimpleSurroundEscapeWords(i, "~");
+}
+
+function handleInsertSuperscript(i: MarkdownTextArea) {
+  handleSimpleSurroundEscapeWords(i, "^");
+}
+
+function handleInsertSpoiler(i: MarkdownTextArea) {
+  const beforeChars = `\n::: spoiler ${I18NextService.i18n.t("spoiler")}\n`;
+  const afterChars = "\n:::\n";
+  handleSimpleSurroundBeforeAfter(i, beforeChars, afterChars);
+}
+
+function handleQuoteInsert(i: MarkdownTextArea) {
+  const textarea = i.textAreaRef.current;
+  const selectedText = window.getSelection()?.toString();
+  let { content } = i.state;
+  if (textarea && selectedText) {
+    const quotedText =
+      selectedText
+        .split("\n")
+        .map(t => `> ${t}`)
+        .join("\n") + "\n\n";
+
+    if (!content) {
+      content = "";
+    } else {
+      content = `${content}\n\n`;
+    }
+
+    i.setState({
+      content: `${content}${quotedText}`,
+    });
+    handleSubmitContentChange(i);
+    // Not sure why this needs a delay
+    setTimeout(() => autosize.update(textarea), 10);
+  }
+}
+
+export function removeLocalStorageMarkdown() {
+  localStorage.removeItem(LOCAL_STORAGE_KEY);
 }

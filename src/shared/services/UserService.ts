@@ -20,11 +20,14 @@ interface AuthInfo {
 }
 
 export class UserService {
-  static #instance: UserService;
   public authInfo?: AuthInfo;
 
-  private constructor() {
-    this.#setAuthInfo();
+  private constructor() {}
+
+  static init() {
+    const s = new this();
+    s.#setAuthInfo();
+    return s;
   }
 
   public login({
@@ -43,14 +46,14 @@ export class UserService {
     }
   }
 
-  public logout() {
+  public async logout() {
     this.authInfo = undefined;
 
     if (isBrowser()) {
       clearAuthCookie();
     }
 
-    HttpService.client.logout();
+    await HttpService.client.logout();
 
     if (isAuthPath(location.pathname)) {
       location.replace("/");
@@ -79,16 +82,20 @@ export class UserService {
 
   #setAuthInfo() {
     if (isBrowser()) {
-      const auth = cookie.parse(document.cookie)[authCookieName];
+      const auth = cookie.parseCookie(document.cookie)[authCookieName];
 
       if (auth) {
-        HttpService.client.setHeaders({ Authorization: `Bearer ${auth}` });
+        HttpService.client.setHeaders({
+          Authorization: `Bearer ${auth}`,
+        });
         this.authInfo = { auth, claims: jwtDecode(auth) };
       }
     }
   }
 
   public static get Instance() {
-    return this.#instance || (this.#instance = new this());
+    return instance;
   }
 }
+
+const instance: UserService = UserService.init();

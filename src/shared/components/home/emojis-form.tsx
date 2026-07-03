@@ -1,5 +1,5 @@
 import { capitalizeFirstLetter, randomStr } from "@utils/helpers";
-import { Component, linkEvent } from "inferno";
+import { Component, FormEvent, InfernoMouseEvent } from "inferno";
 import {
   CreateCustomEmoji,
   CustomEmojiId,
@@ -25,9 +25,9 @@ type EmojiGenericForm = {
 
 interface EmojiFormProps {
   emoji?: CustomEmojiView; // If an emoji is given, this means its an edit.
-  onCreate?(form: CreateCustomEmoji): void;
-  onEdit?(form: EditCustomEmoji): void;
-  onDelete?(form: DeleteCustomEmoji): void;
+  onCreate?: (form: CreateCustomEmoji) => void;
+  onEdit?: (form: EditCustomEmoji) => void;
+  onDelete?: (form: DeleteCustomEmoji) => void;
 }
 
 interface EmojiFormState {
@@ -58,6 +58,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
 
       return {
         id: custom_emoji.id,
+        shortcode: custom_emoji.shortcode,
         category: custom_emoji.category,
         image_url: custom_emoji.image_url,
         alt_text: custom_emoji.alt_text,
@@ -66,10 +67,6 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
     } else {
       return {};
     }
-  }
-
-  constructor(props: any, context: any) {
-    super(props, context);
   }
 
   render() {
@@ -105,7 +102,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
           )}
           <div className="col-12">
             <label
-              className="btn btn-secondary pointer"
+              className="btn btn-light border-light-subtle pointer"
               htmlFor={`file-uploader-${id}`}
               data-tippy-content={I18NextService.i18n.t("upload_image")}
             >
@@ -120,7 +117,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
                 type="file"
                 accept="image/*"
                 className="d-none"
-                onChange={linkEvent(this, this.handleImageUpload)}
+                onChange={e => handleImageUpload(this, e)}
               />
             </label>
           </div>
@@ -134,7 +131,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
               placeholder={I18NextService.i18n.t("column_shortcode")}
               className="form-control"
               value={this.state.form.shortcode}
-              onInput={linkEvent(this, this.handleShortCodeChange)}
+              onInput={e => handleShortCodeChange(this, e)}
             />
           </div>
           <div className="col-12">
@@ -147,7 +144,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
               placeholder={I18NextService.i18n.t("column_category")}
               className="form-control"
               value={this.state.form.category}
-              onInput={linkEvent(this, this.handleCategoryChange)}
+              onInput={e => handleCategoryChange(this, e)}
             />
           </div>
           <div className="col-12">
@@ -160,7 +157,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
               placeholder={I18NextService.i18n.t("column_imageurl")}
               className="form-control"
               value={this.state.form.image_url}
-              onInput={linkEvent(this, this.handleImageUrlChange)}
+              onInput={e => handleImageUrlChange(this, e)}
             />
           </div>
           <div className="col-12">
@@ -173,7 +170,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
               placeholder={I18NextService.i18n.t("column_alttext")}
               className="form-control"
               value={this.state.form.alt_text}
-              onInput={linkEvent(this, this.handleAltTextChange)}
+              onInput={e => handleAltTextChange(this, e)}
             />
           </div>
           <div className="col-12">
@@ -186,7 +183,7 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
               placeholder={I18NextService.i18n.t("column_keywords")}
               className="form-control"
               value={this.state.form.keywords?.join(" ")}
-              onInput={linkEvent(this, this.handleKeywordsChange)}
+              onInput={e => handleKeywordsChange(this, e)}
             />
           </div>
           <div className="col-12">
@@ -194,16 +191,16 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
               <button
                 className="btn btn-danger me-2"
                 type="submit"
-                onClick={linkEvent(this, this.handleDeleteEmoji)}
+                onClick={e => handleDeleteEmoji(this, e)}
               >
                 {I18NextService.i18n.t("delete")}
               </button>
             )}
             <button
-              className="btn btn-secondary"
+              className="btn btn-light border-light-subtle"
               type="submit"
               disabled={!this.enableForm}
-              onClick={linkEvent(this, this.handleSubmitEmoji)}
+              onClick={e => handleSubmitEmoji(this, e)}
             >
               {submitTitle}
             </button>
@@ -222,78 +219,103 @@ export class EmojiForm extends Component<EmojiFormProps, EmojiFormState> {
       (this.state.form.keywords?.length ?? 0) > 0
     );
   }
+}
+function handleShortCodeChange(
+  i: EmojiForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState({
+    form: { ...i.state.form, shortcode: event.target.value },
+    bypassNavWarning: false,
+  });
+}
 
-  handleShortCodeChange(i: EmojiForm, event: any) {
-    i.setState({
-      form: { ...i.state.form, shortcode: event.target.value },
-      bypassNavWarning: false,
-    });
-  }
+function handleCategoryChange(
+  i: EmojiForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState({
+    form: { ...i.state.form, category: event.target.value },
+    bypassNavWarning: false,
+  });
+}
 
-  handleCategoryChange(i: EmojiForm, event: any) {
-    i.setState({
-      form: { ...i.state.form, category: event.target.value },
-      bypassNavWarning: false,
-    });
-  }
+function handleImageUrlChange(
+  i: EmojiForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState({
+    form: { ...i.state.form, image_url: event.target.value },
+    bypassNavWarning: false,
+  });
+}
 
-  handleImageUrlChange(i: EmojiForm, event: any) {
-    i.setState({
-      form: { ...i.state.form, image_url: event.target.value },
-      bypassNavWarning: false,
-    });
-  }
+function handleAltTextChange(i: EmojiForm, event: FormEvent<HTMLInputElement>) {
+  i.setState({
+    form: { ...i.state.form, alt_text: event.target.value },
+    bypassNavWarning: false,
+  });
+}
 
-  handleAltTextChange(i: EmojiForm, event: any) {
-    i.setState({
-      form: { ...i.state.form, alt_text: event.target.value },
-      bypassNavWarning: false,
-    });
-  }
+function handleKeywordsChange(
+  i: EmojiForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  const keywords: string[] = event.target.value.split(" ");
 
-  handleKeywordsChange(i: EmojiForm, event: any) {
-    const keywords: string[] = event.target.value.split(" ");
+  i.setState({
+    form: { ...i.state.form, keywords },
+    bypassNavWarning: false,
+  });
+}
 
-    i.setState({
-      form: { ...i.state.form, keywords },
-      bypassNavWarning: false,
-    });
-  }
-
-  handleDeleteEmoji(i: EmojiForm, event: any) {
-    event.preventDefault();
-    const id = i.props.emoji?.custom_emoji.id;
-    if (id) {
-      i.setState({ bypassNavWarning: true });
-      i.props.onDelete?.({ id });
-    }
-  }
-
-  handleSubmitEmoji(i: EmojiForm, event: any) {
-    event.preventDefault();
-
+function handleDeleteEmoji(
+  i: EmojiForm,
+  event: InfernoMouseEvent<HTMLButtonElement>,
+) {
+  event.preventDefault();
+  const id = i.props.emoji?.custom_emoji.id;
+  if (id) {
     i.setState({ bypassNavWarning: true });
+    i.props.onDelete?.({ id });
+  }
+}
 
-    const form = i.state.form;
-    if (isEditForm(form)) {
-      i.props.onEdit?.(form);
-    } else if (isCreateForm(form)) {
-      i.props.onCreate?.(form);
+function handleSubmitEmoji(
+  i: EmojiForm,
+  event: InfernoMouseEvent<HTMLButtonElement>,
+) {
+  event.preventDefault();
+
+  i.setState({ bypassNavWarning: true });
+
+  const form = i.state.form;
+  if (isEditForm(form)) {
+    i.props.onEdit?.(form);
+  } else if (isCreateForm(form)) {
+    i.props.onCreate?.(form);
+  }
+}
+
+async function handleImageUpload(
+  i: EmojiForm,
+  event: FormEvent<HTMLInputElement> | File | undefined,
+) {
+  let file: File | undefined = undefined;
+  if (event instanceof Event && event.target) {
+    event.preventDefault();
+    const target = event.target;
+    if (target?.files) {
+      file = target.files[0];
     }
+  } else if (event instanceof File) {
+    file = event;
   }
 
-  handleImageUpload(i: EmojiForm, event: any) {
-    let file: File;
-    if (event.target) {
-      event.preventDefault();
-      file = event.target.files[0];
-    } else {
-      file = event;
-    }
-
+  if (file) {
     i.setState({ loadingImage: true });
 
-    HttpService.client.uploadImage({ image: file }).then(res => {
+    await HttpService.client.uploadImage({ image: file }).then(res => {
       if (res.state === "success") {
         pictrsDeleteToast(res.data.filename);
         i.setState({

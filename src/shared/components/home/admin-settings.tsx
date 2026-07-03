@@ -1,17 +1,14 @@
 import { fetchThemeList, setIsoData, showLocal } from "@utils/app";
-import {
-  capitalizeFirstLetter,
-  cursorComponents,
-  resourcesSettled,
-} from "@utils/helpers";
+import { capitalizeFirstLetter, resourcesSettled } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
-import { DirectionalCursor, RouteDataResponse } from "@utils/types";
+import { RouteDataResponse } from "@utils/types";
 import classNames from "classnames";
-import { Component } from "inferno";
+import { Component, FormEvent, InfernoNode } from "inferno";
 import {
   AdminAllowInstanceParams,
   AdminBlockInstanceParams,
-  AdminListUsersResponse,
+  PagedResponse,
+  LocalUserView,
   CreateCustomEmoji,
   CreateOAuthProvider,
   CreateTagline,
@@ -21,13 +18,15 @@ import {
   EditCustomEmoji,
   EditOAuthProvider,
   EditSite,
-  GetFederatedInstancesResponse,
+  FederatedInstanceView,
   GetSiteResponse,
   LemmyHttp,
   ListCustomEmojisResponse,
-  ListMediaResponse,
-  ListTaglinesResponse,
-  UpdateTagline,
+  LocalImageView,
+  Tagline,
+  EditTagline,
+  PaginationCursor,
+  GetFederatedInstancesKind,
 } from "lemmy-js-client";
 import { InitialFetchRequest } from "@utils/types";
 import { FirstLoadService, I18NextService } from "../../services";
@@ -40,7 +39,7 @@ import {
 } from "../../services/HttpService";
 import { toast } from "@utils/app";
 import { HtmlTags } from "../common/html-tags";
-import { Spinner } from "../common/icon";
+import { Icon, Spinner } from "../common/icon";
 import Tabs from "../common/tabs";
 import { PersonListing } from "../person/person-listing";
 import { EmojiForm } from "./emojis-form";
@@ -48,7 +47,7 @@ import RateLimitForm from "./rate-limit-form";
 import { SiteForm } from "./site-form";
 import { TaglineForm } from "./tagline-form";
 import { getHttpBaseInternal } from "../../utils/env";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { MediaUploads } from "../common/media-uploads";
 import { snapToTop } from "@utils/browser";
@@ -58,33 +57,41 @@ import OAuthProvidersTab from "./oauth/oauth-providers-tab";
 import { InstanceBlockForm } from "./instance-block-form";
 import { PaginatorCursor } from "@components/common/paginator-cursor";
 import { fetchLimit } from "@utils/config";
-import { linkEvent } from "inferno";
 import { UserBadges } from "@components/common/user-badges";
 import { MomentTime } from "@components/common/moment-time";
-import { TableHr } from "@components/common/tables";
+import { ResponsiveTableRowHeader, TableHr } from "@components/common/tables";
 import { NoOptionI18nKeys } from "i18next";
 import { InstanceList } from "./instances";
 import { InstanceAllowForm } from "./instance-allow-form";
+import {
+  AllOrBanned,
+  AllOrBannedDropdown,
+} from "@components/common/all-or-banned-dropdown";
+import { InstancesKindDropdown } from "@components/common/instances-kind-dropdown";
+import { removeLocalStorageMarkdown } from "@components/common/markdown-textarea";
 
 type AdminSettingsData = RouteDataResponse<{
-  usersRes: AdminListUsersResponse;
-  instancesRes: GetFederatedInstancesResponse;
-  uploadsRes: ListMediaResponse;
-  taglinesRes: ListTaglinesResponse;
+  usersRes: PagedResponse<LocalUserView>;
+  instancesRes: PagedResponse<FederatedInstanceView>;
+  uploadsRes: PagedResponse<LocalImageView>;
+  taglinesRes: PagedResponse<Tagline>;
   emojisRes: ListCustomEmojisResponse;
 }>;
 
 interface AdminSettingsState {
-  instancesRes: RequestState<GetFederatedInstancesResponse>;
-  usersRes: RequestState<AdminListUsersResponse>;
-  usersCursor?: DirectionalCursor;
-  usersBannedOnly: boolean;
+  instancesRes: RequestState<PagedResponse<FederatedInstanceView>>;
+  usersRes: RequestState<PagedResponse<LocalUserView>>;
+  instancesKind: GetFederatedInstancesKind;
+  instancesCursor?: PaginationCursor;
+  instancesDomainFilter?: string;
+  usersCursor?: PaginationCursor;
+  allOrBanned: AllOrBanned;
   leaveAdminTeamRes: RequestState<GetSiteResponse>;
   showConfirmLeaveAdmin: boolean;
-  uploadsRes: RequestState<ListMediaResponse>;
-  uploadsCursor?: DirectionalCursor;
-  taglinesRes: RequestState<ListTaglinesResponse>;
-  taglinesCursor?: DirectionalCursor;
+  uploadsRes: RequestState<PagedResponse<LocalImageView>>;
+  uploadsCursor?: PaginationCursor;
+  taglinesRes: RequestState<PagedResponse<Tagline>>;
+  taglinesCursor?: PaginationCursor;
   emojisRes: RequestState<ListCustomEmojisResponse>;
   loading: boolean;
   themeList: string[];
@@ -107,8 +114,9 @@ export class AdminSettings extends Component<
   private isoData = setIsoData<AdminSettingsData>(this.context);
   state: AdminSettingsState = {
     usersRes: EMPTY_REQUEST,
-    usersBannedOnly: false,
+    allOrBanned: "all",
     instancesRes: EMPTY_REQUEST,
+    instancesKind: "all",
     leaveAdminTeamRes: EMPTY_REQUEST,
     showConfirmLeaveAdmin: false,
     uploadsRes: EMPTY_REQUEST,
@@ -129,29 +137,8 @@ export class AdminSettings extends Component<
     ]);
   }
 
-  constructor(props: any, context: any) {
+  constructor(props: AdminSettingsRouteProps, context: object) {
     super(props, context);
-
-    this.handleEditSite = this.handleEditSite.bind(this);
-    this.handleUsersPageChange = this.handleUsersPageChange.bind(this);
-    this.handleUploadsPageChange = this.handleUploadsPageChange.bind(this);
-    this.handleTaglinesPageChange = this.handleTaglinesPageChange.bind(this);
-    this.handleToggleShowLeaveAdminConfirmation =
-      this.handleToggleShowLeaveAdminConfirmation.bind(this);
-    this.handleLeaveAdminTeam = this.handleLeaveAdminTeam.bind(this);
-    this.handleEditOAuthProvider = this.handleEditOAuthProvider.bind(this);
-    this.handleDeleteOAuthProvider = this.handleDeleteOAuthProvider.bind(this);
-    this.handleCreateOAuthProvider = this.handleCreateOAuthProvider.bind(this);
-    this.handleEditTagline = this.handleEditTagline.bind(this);
-    this.handleDeleteTagline = this.handleDeleteTagline.bind(this);
-    this.handleCreateTagline = this.handleCreateTagline.bind(this);
-    this.handleEditEmoji = this.handleEditEmoji.bind(this);
-    this.handleDeleteEmoji = this.handleDeleteEmoji.bind(this);
-    this.handleCreateEmoji = this.handleCreateEmoji.bind(this);
-    this.handleInstanceBlockCreate = this.handleInstanceBlockCreate.bind(this);
-    this.handleInstanceBlockRemove = this.handleInstanceBlockRemove.bind(this);
-    this.handleInstanceAllowCreate = this.handleInstanceAllowCreate.bind(this);
-    this.handleInstanceAllowRemove = this.handleInstanceAllowRemove.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -170,20 +157,20 @@ export class AdminSettings extends Component<
     }
   }
 
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
-  }: InitialFetchRequest): Promise<AdminSettingsData> {
+  }: InitialFetchRequest): Promise<AdminSettingsData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
     return {
-      usersRes: await client.listUsers({ banned_only: false }),
+      usersRes: await client.adminListUsers({ banned_only: false }),
       instancesRes: await client.getFederatedInstances({ kind: "all" }),
-      uploadsRes: await client.listMediaAdmin({ limit: fetchLimit }),
+      uploadsRes: await client.adminListMedia({ limit: fetchLimit }),
       taglinesRes: await client.listTaglines({ limit: fetchLimit }),
       emojisRes: await client.listCustomEmojis({}),
     };
-  }
+  };
 
   async componentWillMount() {
     if (isBrowser()) {
@@ -207,7 +194,7 @@ export class AdminSettings extends Component<
       <div className="admin-settings container">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         <Tabs
           tabs={[
@@ -229,7 +216,7 @@ export class AdminSettings extends Component<
                     <div className="col-12 col-md-6">
                       <SiteForm
                         showLocal={showLocal(this.isoData)}
-                        onSaveSite={this.handleEditSite}
+                        onEdit={form => handleEditSite(this, form)}
                         siteRes={this.isoData.siteRes}
                         themeList={this.state.themeList}
                         loading={this.state.loading}
@@ -288,7 +275,7 @@ export class AdminSettings extends Component<
                     rateLimits={
                       this.isoData.siteRes?.site_view.local_site_rate_limit
                     }
-                    onSaveSite={this.handleEditSite}
+                    onSaveSite={form => handleEditSite(this, form)}
                     loading={this.state.loading}
                   />
                 </div>
@@ -354,9 +341,9 @@ export class AdminSettings extends Component<
                     oauthProviders={
                       this.isoData.siteRes?.admin_oauth_providers ?? []
                     }
-                    onCreate={this.handleCreateOAuthProvider}
-                    onDelete={this.handleDeleteOAuthProvider}
-                    onEdit={this.handleEditOAuthProvider}
+                    onCreate={form => handleCreateOAuthProvider(this, form)}
+                    onDelete={form => handleDeleteOAuthProvider(this, form)}
+                    onEdit={form => handleEditOAuthProvider(this, form)}
                   />
                 </div>
               ),
@@ -385,18 +372,18 @@ export class AdminSettings extends Component<
       emojisRes,
       themeList,
     ] = await Promise.all([
-      HttpService.client.listUsers({
-        banned_only: this.state.usersBannedOnly,
-        ...cursorComponents(this.state.usersCursor),
+      HttpService.client.adminListUsers({
+        banned_only: this.state.allOrBanned === "banned",
+        page_cursor: this.state.usersCursor,
         limit: fetchLimit,
       }),
       HttpService.client.getFederatedInstances({ kind: "all" }),
-      HttpService.client.listMediaAdmin({
-        ...cursorComponents(this.state.uploadsCursor),
+      HttpService.client.adminListMedia({
+        page_cursor: this.state.uploadsCursor,
         limit: fetchLimit,
       }),
       HttpService.client.listTaglines({
-        ...cursorComponents(this.state.taglinesCursor),
+        page_cursor: this.state.taglinesCursor,
         limit: fetchLimit,
       }),
       HttpService.client.listCustomEmojis({}),
@@ -417,9 +404,9 @@ export class AdminSettings extends Component<
     this.setState({
       usersRes: LOADING_REQUEST,
     });
-    const usersRes = await HttpService.client.listUsers({
-      ...cursorComponents(this.state.uploadsCursor),
-      banned_only: this.state.usersBannedOnly,
+    const usersRes = await HttpService.client.adminListUsers({
+      page_cursor: this.state.usersCursor,
+      banned_only: this.state.allOrBanned === "banned",
       limit: fetchLimit,
     });
 
@@ -430,8 +417,8 @@ export class AdminSettings extends Component<
     this.setState({
       uploadsRes: LOADING_REQUEST,
     });
-    const uploadsRes = await HttpService.client.listMediaAdmin({
-      ...cursorComponents(this.state.uploadsCursor),
+    const uploadsRes = await HttpService.client.adminListMedia({
+      page_cursor: this.state.uploadsCursor,
       limit: fetchLimit,
     });
 
@@ -443,7 +430,7 @@ export class AdminSettings extends Component<
       taglinesRes: LOADING_REQUEST,
     });
     const taglinesRes = await HttpService.client.listTaglines({
-      ...cursorComponents(this.state.taglinesCursor),
+      page_cursor: this.state.taglinesCursor,
       limit: fetchLimit,
     });
 
@@ -464,7 +451,9 @@ export class AdminSettings extends Component<
       instancesRes: LOADING_REQUEST,
     });
     const instancesRes = await HttpService.client.getFederatedInstances({
-      kind: "all",
+      kind: this.state.instancesKind,
+      domain_filter: this.state.instancesDomainFilter,
+      page_cursor: this.state.instancesCursor,
     });
 
     this.setState({ instancesRes });
@@ -473,8 +462,8 @@ export class AdminSettings extends Component<
   admins() {
     const admins = this.isoData.siteRes.admins;
 
-    const nameCols = "col-12 col-md-6";
-    const dataCols = "col-4 col-md-2";
+    const nameCols = "col-6 col-md-6";
+    const dataCols = "col-6 col-md-2";
 
     return (
       <>
@@ -482,29 +471,33 @@ export class AdminSettings extends Component<
           {capitalizeFirstLetter(I18NextService.i18n.t("admins"))}
         </h1>
         <div id="admins-table">
-          <div className="row">
-            <div className={`${nameCols} fw-bold`}>
-              {I18NextService.i18n.t("username")}
+          <div className="d-none d-md-block">
+            <div className="row">
+              <div className={`${nameCols} fw-bold`}>
+                {I18NextService.i18n.t("username")}
+              </div>
+              <div className={`${dataCols} fw-bold`}>
+                {I18NextService.i18n.t("registered_date_title")}
+              </div>
+              <div className={`${dataCols} fw-bold`}>
+                {I18NextService.i18n.t("posts")}
+              </div>
+              <div className={`${dataCols} fw-bold`}>
+                {I18NextService.i18n.t("comments")}
+              </div>
             </div>
-            <div className={`${dataCols} fw-bold`}>
-              {I18NextService.i18n.t("registered_date_title")}
-            </div>
-            <div className={`${dataCols} fw-bold`}>
-              {I18NextService.i18n.t("posts")}
-            </div>
-            <div className={`${dataCols} fw-bold`}>
-              {I18NextService.i18n.t("comments")}
-            </div>
+            <TableHr />
           </div>
-          <TableHr />
           {admins.map(admin => (
             <>
               <div className="row" key={admin.person.id}>
+                <ResponsiveTableRowHeader title={"username"} />
                 <div className={nameCols}>
                   <PersonListing
                     person={admin.person}
                     banned={admin.banned}
                     myUserInfo={this.isoData.myUserInfo}
+                    muted={false}
                   />
                   <UserBadges
                     classNames="ms-1"
@@ -514,13 +507,16 @@ export class AdminSettings extends Component<
                     creator={admin.person}
                   />
                 </div>
+                <ResponsiveTableRowHeader title={"registered_date_title"} />
                 <div className={dataCols}>
                   <MomentTime published={admin.person.published_at} />
                 </div>
+                <ResponsiveTableRowHeader title={"posts"} />
                 <div className={dataCols}>{admin.person.post_count}</div>
+                <ResponsiveTableRowHeader title={"comments"} />
                 <div className={dataCols}>{admin.person.comment_count}</div>
               </div>
-              <hr />
+              <hr key={admin.person.id + "hr"} />
             </>
           ))}
         </div>
@@ -528,8 +524,8 @@ export class AdminSettings extends Component<
         <ConfirmationModal
           message={I18NextService.i18n.t("leave_admin_team_confirmation")}
           loadingMessage={I18NextService.i18n.t("leaving_admin_team")}
-          onNo={this.handleToggleShowLeaveAdminConfirmation}
-          onYes={this.handleLeaveAdminTeam}
+          onNo={() => handleToggleShowLeaveAdminConfirmation(this)}
+          onYes={() => handleLeaveAdminTeam(this)}
           show={this.state.showConfirmLeaveAdmin}
         />
       </>
@@ -539,7 +535,7 @@ export class AdminSettings extends Component<
   leaveAdmin() {
     return (
       <button
-        onClick={this.handleToggleShowLeaveAdminConfirmation}
+        onClick={() => handleToggleShowLeaveAdminConfirmation(this)}
         className="btn btn-danger mb-2"
       >
         {this.state.leaveAdminTeamRes.state === "loading" ? (
@@ -555,52 +551,19 @@ export class AdminSettings extends Component<
     return (
       <>
         <h1 className="h4 mb-4">{I18NextService.i18n.t("users")}</h1>
-        <div className="row align-items-center mb-3 g-3">
-          <div className="col-auto">
-            <div
-              className="data-type-select btn-group btn-group-toggle flex-wrap"
-              role="group"
-            >
-              <input
-                id={`users-all`}
-                type="radio"
-                className="btn-check"
-                value="true"
-                checked={!this.state.usersBannedOnly}
-                onChange={linkEvent(this, this.handleUsersBannedOnlyChange)}
-              />
-              <label
-                htmlFor={`users-all`}
-                className={classNames("pointer btn btn-outline-secondary", {
-                  active: !this.state.usersBannedOnly,
-                })}
-              >
-                {I18NextService.i18n.t("all")}
-              </label>
-              <input
-                id={`users-banned-only`}
-                type="radio"
-                className="btn-check"
-                value="false"
-                checked={this.state.usersBannedOnly}
-                onChange={linkEvent(this, this.handleUsersBannedOnlyChange)}
-              />
-              <label
-                htmlFor={`users-banned-only`}
-                className={classNames("pointer btn btn-outline-secondary", {
-                  active: this.state.usersBannedOnly,
-                })}
-              >
-                {I18NextService.i18n.t("banned")}
-              </label>
-            </div>
+        <div className="row row-cols-auto align-items-center mb-3 g-3">
+          <div className="col">
+            <AllOrBannedDropdown
+              currentOption={this.state.allOrBanned}
+              onSelect={val => handleUsersAllOrBannedChange(this, val)}
+            />
           </div>
         </div>
       </>
     );
   }
 
-  userList() {
+  userList(): InfernoNode | void {
     switch (this.state.usersRes.state) {
       case "loading":
         return (
@@ -609,38 +572,42 @@ export class AdminSettings extends Component<
           </h5>
         );
       case "success": {
-        const local_users = this.state.usersRes.data.users;
-        const nameCols = "col-12 col-md-3";
-        const dataCols = "col-4 col-md-2";
+        const local_users = this.state.usersRes.data.items;
+        const nameCols = "col-6 col-md-3";
+        const dataCols = "col-6 col-md-2";
 
         return (
           <div id="users-table">
-            <div className="row">
-              <div className={`${nameCols} fw-bold`}>
-                {I18NextService.i18n.t("username")}
+            <div className="d-none d-md-block">
+              <div className="row">
+                <div className={`${nameCols} fw-bold`}>
+                  {I18NextService.i18n.t("username")}
+                </div>
+                <div className={`${nameCols} fw-bold`}>
+                  {I18NextService.i18n.t("email")}
+                </div>
+                <div className={`${dataCols} fw-bold`}>
+                  {I18NextService.i18n.t("registered_date_title")}
+                </div>
+                <div className={`${dataCols} fw-bold`}>
+                  {I18NextService.i18n.t("posts")}
+                </div>
+                <div className={`${dataCols} fw-bold`}>
+                  {I18NextService.i18n.t("comments")}
+                </div>
               </div>
-              <div className={`${nameCols} fw-bold`}>
-                {I18NextService.i18n.t("email")}
-              </div>
-              <div className={`${dataCols} fw-bold`}>
-                {I18NextService.i18n.t("registered_date_title")}
-              </div>
-              <div className={`${dataCols} fw-bold`}>
-                {I18NextService.i18n.t("posts")}
-              </div>
-              <div className={`${dataCols} fw-bold`}>
-                {I18NextService.i18n.t("comments")}
-              </div>
+              <TableHr />
             </div>
-            <TableHr />
             {local_users.map(local_user => (
               <>
                 <div className="row" key={local_user.person.id}>
+                  <ResponsiveTableRowHeader title={"username"} />
                   <div className={nameCols}>
                     <PersonListing
                       person={local_user.person}
                       banned={local_user.banned}
                       myUserInfo={this.isoData.myUserInfo}
+                      muted={false}
                     />
                     <UserBadges
                       classNames="ms-1"
@@ -650,22 +617,28 @@ export class AdminSettings extends Component<
                       creator={local_user.person}
                     />
                   </div>
-                  <div className={nameCols}>{local_user.local_user.email}</div>
+                  <ResponsiveTableRowHeader title={"email"} />
+                  <div className={classNames(nameCols, "text-break")}>
+                    {local_user.local_user.email}
+                  </div>
+                  <ResponsiveTableRowHeader title={"registered_date_title"} />
                   <div className={dataCols}>
                     <MomentTime published={local_user.person.published_at} />
                   </div>
+                  <ResponsiveTableRowHeader title={"posts"} />
                   <div className={dataCols}>{local_user.person.post_count}</div>
+                  <ResponsiveTableRowHeader title={"comments"} />
                   <div className={dataCols}>
                     {local_user.person.comment_count}
                   </div>
                 </div>
-                <hr />
+                <hr key={local_user.person.id + "hr"} />
               </>
             ))}
             <PaginatorCursor
               current={this.state.usersCursor}
               resource={this.state.usersRes}
-              onPageChange={this.handleUsersPageChange}
+              onPageChange={cursor => handleUsersPageChange(this, cursor)}
             />
           </div>
         );
@@ -673,7 +646,7 @@ export class AdminSettings extends Component<
     }
   }
 
-  uploads() {
+  uploads(): InfernoNode | void {
     switch (this.state.uploadsRes.state) {
       case "loading":
         return (
@@ -693,7 +666,7 @@ export class AdminSettings extends Component<
             <PaginatorCursor
               current={this.state.uploadsCursor}
               resource={this.state.uploadsRes}
-              onPageChange={this.handleUploadsPageChange}
+              onPageChange={cursor => handleUploadsPageChange(this, cursor)}
             />
           </div>
         );
@@ -701,7 +674,7 @@ export class AdminSettings extends Component<
     }
   }
 
-  taglinesTab() {
+  taglinesTab(): InfernoNode | void {
     switch (this.state.taglinesRes.state) {
       case "loading":
         return (
@@ -710,7 +683,7 @@ export class AdminSettings extends Component<
           </h5>
         );
       case "success": {
-        const taglines = this.state.taglinesRes.data.taglines;
+        const taglines = this.state.taglinesRes.data.items;
 
         return (
           <>
@@ -720,8 +693,8 @@ export class AdminSettings extends Component<
                 key={`tagline-form-${t.id}`}
                 tagline={t}
                 myUserInfo={this.isoData.myUserInfo}
-                onEdit={this.handleEditTagline}
-                onDelete={this.handleDeleteTagline}
+                onEdit={form => handleEditTagline(this, form)}
+                onDelete={form => handleDeleteTagline(this, form)}
               />
             ))}
             {this.emptyTaglineForm()}
@@ -729,7 +702,7 @@ export class AdminSettings extends Component<
               <PaginatorCursor
                 current={this.state.taglinesCursor}
                 resource={this.state.taglinesRes}
-                onPageChange={this.handleTaglinesPageChange}
+                onPageChange={cursor => handleTaglinesPageChange(this, cursor)}
               />
             )}
           </>
@@ -738,7 +711,7 @@ export class AdminSettings extends Component<
     }
   }
 
-  emojisTab() {
+  emojisTab(): InfernoNode | void {
     switch (this.state.emojisRes.state) {
       case "loading":
         return (
@@ -758,8 +731,8 @@ export class AdminSettings extends Component<
               <EmojiForm
                 key={`emoji-form-${e.custom_emoji.id}`}
                 emoji={e}
-                onEdit={this.handleEditEmoji}
-                onDelete={this.handleDeleteEmoji}
+                onEdit={form => handleEditEmoji(this, form)}
+                onDelete={form => handleDeleteEmoji(this, form)}
               />
             ))}
             {this.emptyEmojiForm()}
@@ -774,16 +747,16 @@ export class AdminSettings extends Component<
     return (
       <TaglineForm
         myUserInfo={this.isoData.myUserInfo}
-        onCreate={this.handleCreateTagline}
+        onCreate={form => handleCreateTagline(this, form)}
       />
     );
   }
 
   emptyEmojiForm() {
-    return <EmojiForm onCreate={this.handleCreateEmoji} />;
+    return <EmojiForm onCreate={form => handleCreateEmoji(this, form)} />;
   }
 
-  instanceBlocksTab() {
+  instanceBlocksTab(): InfernoNode | void {
     switch (this.state.instancesRes.state) {
       case "loading":
         return (
@@ -792,293 +765,396 @@ export class AdminSettings extends Component<
           </h5>
         );
       case "success": {
-        const instances = this.state.instancesRes.data.federated_instances;
+        const instances = this.state.instancesRes.data.items;
+
         return (
           <div>
-            <h1 className="h4 mb-4">
-              {I18NextService.i18n.t("blocked_instances")}
-            </h1>
+            <h1 className="h4">{I18NextService.i18n.t("instances")}</h1>
+            <div className="row row-cols-auto align-items-center g-3 mb-2">
+              <div className="col me-auto">
+                <InstancesKindDropdown
+                  currentOption={this.state.instancesKind}
+                  onSelect={val => handleInstancesKindChange(this, val)}
+                />
+              </div>
+              <form
+                className="d-flex col"
+                onSubmit={e => handleInstancesDomainSearchSubmit(this, e)}
+              >
+                <input
+                  name="q"
+                  type="search"
+                  className="form-control"
+                  placeholder={`${I18NextService.i18n.t("search")}...`}
+                  aria-label={I18NextService.i18n.t("search")}
+                  value={this.state.instancesDomainFilter}
+                  onInput={e => handleInstancesDomainFilterChange(this, e)}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-light border-light-subtle ms-1"
+                >
+                  <Icon icon="search" />
+                </button>
+              </form>
+            </div>
             <InstanceList
-              instances={instances.filter(view => view.blocked) ?? []}
+              instances={instances}
               hideNoneFound
-              onRemove={this.handleInstanceBlockRemove}
+              showRemove={["blocked", "allowed"].includes(
+                this.state.instancesKind,
+              )}
+              onRemove={async instance => {
+                if (this.state.instancesKind === "blocked") {
+                  await handleInstanceBlockRemove(this, instance);
+                } else if (this.state.instancesKind === "allowed") {
+                  await handleInstanceAllowRemove(this, instance);
+                }
+              }}
             />
-            <InstanceBlockForm onCreate={this.handleInstanceBlockCreate} />
+            <PaginatorCursor
+              current={this.state.instancesCursor}
+              resource={this.state.instancesRes}
+              onPageChange={cursor => handleInstancesPageChange(this, cursor)}
+            />
             <hr />
             <h1 className="h4 mb-4">
-              {I18NextService.i18n.t("allowed_instances")}
+              {I18NextService.i18n.t("block_instance")}
             </h1>
-            <InstanceList
-              instances={instances.filter(view => view.allowed) ?? []}
-              hideNoneFound
-              onRemove={this.handleInstanceAllowRemove}
+            <InstanceBlockForm
+              onCreate={form => handleInstanceBlockCreate(this, form)}
             />
-            <InstanceAllowForm onCreate={this.handleInstanceAllowCreate} />
+            <hr />
+            <h1 className="h4 mb-4">
+              {I18NextService.i18n.t("allow_instance")}
+            </h1>
+            <InstanceAllowForm
+              onCreate={form => handleInstanceAllowCreate(this, form)}
+            />
           </div>
         );
       }
     }
   }
+}
 
-  async handleInstanceBlockCreate(form: AdminBlockInstanceParams) {
-    this.setState({ loading: true });
+async function handleInstanceBlockCreate(
+  i: AdminSettings,
+  form: AdminBlockInstanceParams,
+) {
+  i.setState({ loading: true });
 
-    const res = await HttpService.client.adminBlockInstance(form);
+  const res = await HttpService.client.adminBlockInstance(form);
 
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("blocked_x", { item: form.instance }));
-      await this.fetchInstancesOnly();
-    } else if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
-
-    this.setState({ loading: false });
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("blocked_x", { item: form.instance }));
+    await i.fetchInstancesOnly();
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
   }
 
-  async handleInstanceBlockRemove(instance: string) {
-    this.setState({ loading: true });
+  i.setState({ loading: false });
+}
 
-    const form: AdminBlockInstanceParams = {
-      instance,
-      block: false,
-      reason: "",
-    };
-    const res = await HttpService.client.adminBlockInstance(form);
+async function handleInstanceBlockRemove(i: AdminSettings, instance: string) {
+  i.setState({ loading: true });
 
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("unblocked_x", { item: form.instance }));
-      await this.fetchInstancesOnly();
-    } else if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
+  const form: AdminBlockInstanceParams = {
+    instance,
+    block: false,
+    reason: "",
+  };
+  const res = await HttpService.client.adminBlockInstance(form);
 
-    this.setState({ loading: false });
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("unblocked_x", { item: form.instance }));
+    await i.fetchInstancesOnly();
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
   }
 
-  async handleInstanceAllowCreate(form: AdminAllowInstanceParams) {
-    this.setState({ loading: true });
+  i.setState({ loading: false });
+}
 
-    const res = await HttpService.client.adminAllowInstance(form);
+async function handleInstanceAllowCreate(
+  i: AdminSettings,
+  form: AdminAllowInstanceParams,
+) {
+  i.setState({ loading: true });
 
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("allowed_x", { item: form.instance }));
-      await this.fetchInstancesOnly();
-    } else if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
+  const res = await HttpService.client.adminAllowInstance(form);
 
-    this.setState({ loading: false });
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("allowed_x", { item: form.instance }));
+    await i.fetchInstancesOnly();
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
   }
 
-  async handleInstanceAllowRemove(instance: string) {
-    this.setState({ loading: true });
+  i.setState({ loading: false });
+}
 
-    const form: AdminAllowInstanceParams = {
-      instance,
-      allow: false,
-      reason: "",
-    };
-    const res = await HttpService.client.adminAllowInstance(form);
+async function handleInstanceAllowRemove(i: AdminSettings, instance: string) {
+  i.setState({ loading: true });
 
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("disallowed_x", { item: form.instance }));
-      await this.fetchInstancesOnly();
-    } else if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
+  const form: AdminAllowInstanceParams = {
+    instance,
+    allow: false,
+    reason: "",
+  };
+  const res = await HttpService.client.adminAllowInstance(form);
 
-    this.setState({ loading: false });
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("disallowed_x", { item: form.instance }));
+    await i.fetchInstancesOnly();
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
   }
 
-  async handleEditSite(form: EditSite) {
-    this.setState({ loading: true });
+  i.setState({ loading: false });
+}
 
-    const editRes = await HttpService.client.editSite(form);
+async function handleEditSite(i: AdminSettings, form: EditSite) {
+  i.setState({ loading: true });
 
-    if (editRes.state === "success") {
-      this.forceUpdate();
-      toast(I18NextService.i18n.t("site_saved"));
+  const editRes = await HttpService.client.editSite(form);
 
-      // You need to reload the page, to properly update the siteRes everywhere
-      setTimeout(() => location.reload(), 500);
-    }
+  if (editRes.state === "success") {
+    removeLocalStorageMarkdown();
+    i.forceUpdate();
+    toast(I18NextService.i18n.t("site_saved"));
 
-    this.setState({ loading: false });
-
-    return editRes;
+    // You need to reload the page, to properly update the siteRes everywhere
+    setTimeout(() => location.reload(), 500);
   }
 
-  handleToggleShowLeaveAdminConfirmation() {
-    this.setState(prev => ({
-      showConfirmLeaveAdmin: !prev.showConfirmLeaveAdmin,
-    }));
+  i.setState({ loading: false });
+
+  return editRes;
+}
+
+function handleToggleShowLeaveAdminConfirmation(i: AdminSettings) {
+  i.setState(prev => ({
+    showConfirmLeaveAdmin: !prev.showConfirmLeaveAdmin,
+  }));
+}
+
+async function handleLeaveAdminTeam(i: AdminSettings) {
+  i.setState({ leaveAdminTeamRes: LOADING_REQUEST });
+  i.setState({
+    leaveAdminTeamRes: await HttpService.client.leaveAdmin(),
+  });
+
+  if (i.state.leaveAdminTeamRes.state === "success") {
+    toast(I18NextService.i18n.t("left_admin_team"));
+    i.setState({ showConfirmLeaveAdmin: false });
+    const context = i.context as RouterContext;
+    context.router.history.replace("/");
+  }
+}
+
+async function handleUsersAllOrBannedChange(
+  i: AdminSettings,
+  allOrBanned: AllOrBanned,
+) {
+  i.setState({ allOrBanned, usersCursor: undefined });
+  await i.fetchUsersOnly();
+}
+
+async function handleUsersPageChange(
+  i: AdminSettings,
+  cursor?: PaginationCursor,
+) {
+  i.setState({ usersCursor: cursor });
+  await i.fetchUsersOnly();
+}
+
+async function handleUploadsPageChange(
+  i: AdminSettings,
+  cursor?: PaginationCursor,
+) {
+  i.setState({ uploadsCursor: cursor });
+  snapToTop();
+  await i.fetchUploadsOnly();
+}
+
+async function handleTaglinesPageChange(
+  i: AdminSettings,
+  cursor?: PaginationCursor,
+) {
+  i.setState({ taglinesCursor: cursor });
+  snapToTop();
+  await i.fetchTaglinesOnly();
+}
+
+async function handleInstancesKindChange(
+  i: AdminSettings,
+  instancesKind: GetFederatedInstancesKind,
+) {
+  i.setState({ instancesKind, instancesCursor: undefined });
+  await i.fetchInstancesOnly();
+}
+
+async function handleInstancesPageChange(
+  i: AdminSettings,
+  instancesCursor?: PaginationCursor,
+) {
+  i.setState({ instancesCursor });
+  await i.fetchInstancesOnly();
+}
+
+function handleInstancesDomainFilterChange(
+  i: AdminSettings,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState({
+    instancesDomainFilter: event.target.value,
+    instancesCursor: undefined,
+  });
+}
+
+async function handleInstancesDomainSearchSubmit(
+  i: AdminSettings,
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+  await i.fetchInstancesOnly();
+}
+
+async function handleEditOAuthProvider(
+  i: AdminSettings,
+  form: EditOAuthProvider,
+) {
+  i.setState({ loading: true });
+
+  const res = await HttpService.client.editOAuthProvider(form);
+
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("site_saved"));
+
+    // You need to reload the page, to properly update the siteRes everywhere
+    setTimeout(() => location.reload(), 500);
+  } else {
+    toast(I18NextService.i18n.t("couldnt_edit_oauth_provider"), "danger");
   }
 
-  async handleLeaveAdminTeam() {
-    this.setState({ leaveAdminTeamRes: LOADING_REQUEST });
-    this.setState({
-      leaveAdminTeamRes: await HttpService.client.leaveAdmin(),
-    });
+  i.setState({ loading: false });
+}
 
-    if (this.state.leaveAdminTeamRes.state === "success") {
-      toast(I18NextService.i18n.t("left_admin_team"));
-      this.setState({ showConfirmLeaveAdmin: false });
-      this.context.router.history.replace("/");
-    }
+async function handleDeleteOAuthProvider(
+  i: AdminSettings,
+  form: DeleteOAuthProvider,
+) {
+  i.setState({ loading: true });
+
+  const res = await HttpService.client.deleteOAuthProvider(form);
+
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("site_saved"));
+
+    // You need to reload the page, to properly update the siteRes everywhere
+    setTimeout(() => location.reload(), 500);
+  } else {
+    toast(I18NextService.i18n.t("couldnt_delete_oauth_provider"), "danger");
   }
 
-  async handleUsersBannedOnlyChange(i: AdminSettings, event: any) {
-    const checked = event.target.value === "false";
-    i.setState({ usersBannedOnly: checked });
-    await i.fetchUsersOnly();
+  i.setState({ loading: false });
+}
+
+async function handleCreateOAuthProvider(
+  i: AdminSettings,
+  form: CreateOAuthProvider,
+) {
+  i.setState({ loading: true });
+
+  const res = await HttpService.client.createOAuthProvider(form);
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("site_saved"));
+
+    // You need to reload the page, to properly update the siteRes everywhere
+    setTimeout(() => location.reload(), 500);
+  } else {
+    toast(I18NextService.i18n.t("couldnt_create_oauth_provider"), "danger");
   }
 
-  async handleUsersPageChange(cursor: DirectionalCursor) {
-    this.setState({ usersCursor: cursor });
-    await this.fetchUsersOnly();
+  i.setState({ loading: false });
+}
+
+async function handleCreateTagline(i: AdminSettings, form: CreateTagline) {
+  i.setState({ loading: true });
+  const res = await HttpService.client.createTagline(form);
+
+  if (res.state === "success") {
+    removeLocalStorageMarkdown();
+    toast(I18NextService.i18n.t("tagline_created"));
+    await i.fetchTaglinesOnly();
+  } else {
+    toast(I18NextService.i18n.t("couldnt_create_tagline"), "danger");
   }
 
-  async handleUploadsPageChange(cursor: DirectionalCursor) {
-    this.setState({ uploadsCursor: cursor });
-    snapToTop();
-    await this.fetchUploadsOnly();
+  i.setState({ loading: false });
+}
+
+async function handleDeleteTagline(i: AdminSettings, form: DeleteTagline) {
+  i.setState({ loading: true });
+  const res = await HttpService.client.deleteTagline(form);
+
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("tagline_deleted"));
+    await i.fetchTaglinesOnly();
+  } else {
+    toast(I18NextService.i18n.t("couldnt_delete_tagline"), "danger");
+  }
+  i.setState({ loading: false });
+}
+
+async function handleEditTagline(i: AdminSettings, form: EditTagline) {
+  i.setState({ loading: true });
+  const res = await HttpService.client.editTagline(form);
+
+  if (res.state === "success") {
+    removeLocalStorageMarkdown();
+    toast(I18NextService.i18n.t("tagline_updated"));
+  } else {
+    toast(I18NextService.i18n.t("couldnt_update_tagline"), "danger");
+  }
+  i.setState({ loading: false });
+}
+
+async function handleCreateEmoji(i: AdminSettings, form: CreateCustomEmoji) {
+  const res = await HttpService.client.createCustomEmoji(form);
+
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("custom_emoji_created"));
+    await i.fetchEmojisOnly();
+  } else {
+    toast(I18NextService.i18n.t("couldnt_create_custom_emoji"), "danger");
   }
 
-  async handleTaglinesPageChange(cursor: DirectionalCursor) {
-    this.setState({ taglinesCursor: cursor });
-    snapToTop();
-    await this.fetchTaglinesOnly();
+  i.setState({ loading: false });
+}
+
+async function handleDeleteEmoji(i: AdminSettings, form: DeleteCustomEmoji) {
+  i.setState({ loading: true });
+  const res = await HttpService.client.deleteCustomEmoji(form);
+
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("custom_emoji_deleted"));
+    await i.fetchEmojisOnly();
+  } else {
+    toast(I18NextService.i18n.t("couldnt_delete_custom_emoji"), "danger");
   }
+  i.setState({ loading: false });
+}
 
-  async handleEditOAuthProvider(form: EditOAuthProvider) {
-    this.setState({ loading: true });
+async function handleEditEmoji(i: AdminSettings, form: EditCustomEmoji) {
+  i.setState({ loading: true });
+  const res = await HttpService.client.editCustomEmoji(form);
 
-    const res = await HttpService.client.editOAuthProvider(form);
-
-    if (res.state === "success") {
-      const newOAuthProvider = res.data;
-      this.isoData.siteRes.oauth_providers =
-        this.isoData.siteRes.oauth_providers?.map(p => {
-          return p?.id === newOAuthProvider.id ? newOAuthProvider : p;
-        }) ?? [newOAuthProvider];
-      this.forceUpdate();
-      toast(I18NextService.i18n.t("site_saved"));
-    } else {
-      toast(I18NextService.i18n.t("couldnt_edit_oauth_provider"), "danger");
-    }
-
-    this.setState({ loading: false });
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("custom_emoji_updated"));
+  } else {
+    toast(I18NextService.i18n.t("couldnt_update_custom_emoji"), "danger");
   }
-
-  async handleDeleteOAuthProvider(form: DeleteOAuthProvider) {
-    this.setState({ loading: true });
-
-    const res = await HttpService.client.deleteOAuthProvider(form);
-
-    if (res.state === "success") {
-      this.isoData.siteRes.oauth_providers =
-        this.isoData.siteRes.oauth_providers?.filter(p => p.id !== form.id);
-      this.forceUpdate();
-      toast(I18NextService.i18n.t("site_saved"));
-    } else {
-      toast(I18NextService.i18n.t("couldnt_delete_oauth_provider"), "danger");
-    }
-
-    this.setState({ loading: false });
-  }
-
-  async handleCreateOAuthProvider(form: CreateOAuthProvider) {
-    this.setState({ loading: true });
-
-    const res = await HttpService.client.createOAuthProvider(form);
-    if (res.state === "success") {
-      this.isoData.siteRes.oauth_providers = [
-        ...(this.isoData.siteRes.oauth_providers ?? []),
-        res.data,
-      ];
-      this.forceUpdate();
-      toast(I18NextService.i18n.t("site_saved"));
-    } else {
-      toast(I18NextService.i18n.t("couldnt_create_oauth_provider"), "danger");
-    }
-
-    this.setState({ loading: false });
-  }
-
-  async handleCreateTagline(form: CreateTagline) {
-    this.setState({ loading: true });
-    const res = await HttpService.client.createTagline(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("tagline_created"));
-      await this.fetchTaglinesOnly();
-    } else {
-      toast(I18NextService.i18n.t("couldnt_create_tagline"), "danger");
-    }
-
-    this.setState({ loading: false });
-  }
-
-  async handleDeleteTagline(form: DeleteTagline) {
-    this.setState({ loading: true });
-    const res = await HttpService.client.deleteTagline(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("tagline_deleted"));
-      await this.fetchTaglinesOnly();
-    } else {
-      toast(I18NextService.i18n.t("couldnt_delete_tagline"), "danger");
-    }
-    this.setState({ loading: false });
-  }
-
-  async handleEditTagline(form: UpdateTagline) {
-    this.setState({ loading: true });
-    const res = await HttpService.client.editTagline(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("tagline_updated"));
-    } else {
-      toast(I18NextService.i18n.t("couldnt_update_tagline"), "danger");
-    }
-    this.setState({ loading: false });
-  }
-
-  async handleCreateEmoji(form: CreateCustomEmoji) {
-    const res = await HttpService.client.createCustomEmoji(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("custom_emoji_created"));
-      await this.fetchEmojisOnly();
-    } else {
-      toast(I18NextService.i18n.t("couldnt_create_custom_emoji"), "danger");
-    }
-
-    this.setState({ loading: false });
-  }
-
-  async handleDeleteEmoji(form: DeleteCustomEmoji) {
-    this.setState({ loading: true });
-    const res = await HttpService.client.deleteCustomEmoji(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("custom_emoji_deleted"));
-      await this.fetchEmojisOnly();
-    } else {
-      toast(I18NextService.i18n.t("couldnt_delete_custom_emoji"), "danger");
-    }
-    this.setState({ loading: false });
-  }
-
-  async handleEditEmoji(form: EditCustomEmoji) {
-    this.setState({ loading: true });
-    const res = await HttpService.client.editCustomEmoji(form);
-
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("custom_emoji_updated"));
-    } else {
-      toast(I18NextService.i18n.t("couldnt_update_custom_emoji"), "danger");
-    }
-    this.setState({ loading: false });
-  }
+  i.setState({ loading: false });
 }

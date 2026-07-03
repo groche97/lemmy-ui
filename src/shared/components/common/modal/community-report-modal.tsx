@@ -1,33 +1,25 @@
-import {
-  Component,
-  InfernoNode,
-  RefObject,
-  createRef,
-  linkEvent,
-} from "inferno";
+import { Component, InfernoNode, RefObject, createRef } from "inferno";
 import { Modal } from "bootstrap";
 import { modalMixin } from "@components/mixins/modal-mixin";
 import { I18NextService } from "@services/I18NextService";
 
 interface CommunityReportModalProps {
-  onSubmit: (reason: string) => Promise<void>;
+  onSubmit: (reason: string) => void;
   onCancel: () => void;
   show?: boolean;
   children?: InfernoNode;
 }
 
-interface CommunityReportModalState {
-  loading: boolean;
-}
+type CommunityReportModalState = object;
 
-async function handleSubmit(i: CommunityReportModal, event?: Event) {
+function handleSubmit(i: CommunityReportModal, event?: Event) {
   if (i.state.loading || !i.reasonRef.current?.value) {
     event?.preventDefault();
     return;
   }
 
   i.setState({ loading: true });
-  await i.props.onSubmit(i.reasonRef.current.value);
+  i.props.onSubmit(i.reasonRef.current.value);
   i.setState({ loading: false });
 }
 
@@ -44,7 +36,7 @@ export default class CommunityReportModal extends Component<
   readonly reasonRef: RefObject<HTMLInputElement>;
   modal?: Modal;
 
-  constructor(props: CommunityReportModalProps, context: any) {
+  constructor(props: CommunityReportModalProps, context: object) {
     super(props, context);
 
     this.modalDivRef = createRef();
@@ -71,7 +63,7 @@ export default class CommunityReportModal extends Component<
             </header>
             <div className="modal-body text-center align-middle text-body">
               <form
-                onSubmit={linkEvent(this, handleSubmit)}
+                onSubmit={event => handleSubmit(this, event)}
                 className="p-3 w-100 container"
                 id="community-report-form"
               >
@@ -99,7 +91,7 @@ export default class CommunityReportModal extends Component<
               <button
                 type="button"
                 className="btn btn-success"
-                onClick={linkEvent(this, handleSubmit)}
+                onClick={event => handleSubmit(this, event)}
                 disabled={this.state.loading}
               >
                 {I18NextService.i18n.t("create_report")}
@@ -107,7 +99,7 @@ export default class CommunityReportModal extends Component<
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={linkEvent(this, this.props.onCancel)}
+                onClick={() => this.props.onCancel()}
               >
                 {I18NextService.i18n.t("cancel")}
               </button>

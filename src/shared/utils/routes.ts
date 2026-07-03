@@ -1,4 +1,4 @@
-import { IRouteProps, RouteComponentProps } from "inferno-router/dist/Route";
+import { IRouteProps, RouteComponentProps } from "inferno-router";
 import {
   Communities,
   CommunitiesFetchConfig,
@@ -29,14 +29,13 @@ import {
   Login,
   LoginFetchConfig,
   getLoginQueryParams,
-} from "@components/home/login";
-import { LoginReset } from "@components/home/login-reset";
+} from "@components/home/authenticate/login";
+import { LoginReset } from "@components/home/authenticate/login-reset";
 import { Setup } from "@components/home/setup";
 import {
   Signup,
   SignupFetchConfig,
-  getSignupQueryParams,
-} from "@components/home/signup";
+} from "@components/home/authenticate/signup";
 import {
   Modlog,
   ModlogFetchConfig,
@@ -108,28 +107,43 @@ import {
   MultiCommunities,
   MultiCommunitiesFetchConfig,
 } from "@components/multi-community/multi-communities";
+import {
+  CommunitySettings,
+  CommunitySettingsFetchConfig,
+} from "@components/community/community-settings";
+import {
+  MultiCommunitySettings,
+  MultiCommunitySettingsFetchConfig,
+} from "@components/multi-community/multi-community-settings";
 
 export interface IRoutePropsWithFetch<
   DataT extends RouteData,
   PathPropsT extends Record<string, string>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   QueryPropsT extends Record<string, any>,
 > extends IRouteProps {
-  fetchInitialData?(
+  fetchInitialData?: (
     req: InitialFetchRequest<PathPropsT, QueryPropsT>,
-  ): Promise<DataT>;
-  getQueryParams?(
+  ) => Promise<DataT>;
+  getQueryParams?: (
     source: string | undefined,
     siteRes: GetSiteResponse,
     myUserInfo?: MyUserInfo,
-  ): QueryPropsT;
+  ) => QueryPropsT;
   mountedSameRouteNavKey?: string;
   component: typeof Component<
     RouteComponentProps<PathPropsT> & QueryPropsT,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     any
   >;
 }
 
-export const routes: IRoutePropsWithFetch<RouteData, any, any>[] = [
+export const routes: IRoutePropsWithFetch<
+  RouteData,
+  Record<string, string>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  any
+>[] = [
   {
     path: `/`,
     component: Home,
@@ -149,7 +163,6 @@ export const routes: IRoutePropsWithFetch<RouteData, any, any>[] = [
   },
   {
     path: `/signup`,
-    getQueryParams: getSignupQueryParams,
     component: Signup,
   } as SignupFetchConfig,
   {
@@ -211,12 +224,22 @@ export const routes: IRoutePropsWithFetch<RouteData, any, any>[] = [
     mountedSameRouteNavKey: "community",
   } as CommunityFetchConfig,
   {
+    path: `/c/:name/settings`,
+    component: CommunitySettings,
+    fetchInitialData: CommunitySettings.fetchInitialData,
+  } as CommunitySettingsFetchConfig,
+  {
     path: `/m/:name`,
     component: MultiCommunity,
     fetchInitialData: MultiCommunity.fetchInitialData,
     getQueryParams: getMultiCommunityQueryParams,
     mountedSameRouteNavKey: "multi_community",
   } as MultiCommunityFetchConfig,
+  {
+    path: `/m/:name/settings`,
+    component: MultiCommunitySettings,
+    fetchInitialData: MultiCommunitySettings.fetchInitialData,
+  } as MultiCommunitySettingsFetchConfig,
   {
     path: `/u/:username`,
     component: Profile,
@@ -289,6 +312,7 @@ export const routes: IRoutePropsWithFetch<RouteData, any, any>[] = [
     component: Instances,
     fetchInitialData: Instances.fetchInitialData,
     getQueryParams: getInstancesQueryParams,
+    mountedSameRouteNavKey: "instances",
   } as InstancesFetchConfig,
   { path: `/legal`, component: Legal },
   {

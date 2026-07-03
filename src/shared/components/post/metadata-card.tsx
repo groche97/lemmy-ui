@@ -1,18 +1,15 @@
 import { Component } from "inferno";
 import { Post } from "lemmy-js-client";
-import * as sanitizeHtml from "sanitize-html";
+import sanitize from "sanitize-html";
 import { relTags } from "@utils/config";
 import { Icon } from "../common/icon";
+import { hostname } from "@utils/helpers";
 
 interface MetadataCardProps {
   post: Post;
 }
 
 export class MetadataCard extends Component<MetadataCardProps> {
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
   render() {
     const post = this.props.post;
 
@@ -35,7 +32,7 @@ export class MetadataCard extends Component<MetadataCardProps> {
                         href={post.url}
                         rel={relTags}
                       >
-                        {new URL(post.url).hostname}
+                        {hostname(post.url)}
                         <Icon icon="external-link" classes="ms-1" />
                       </a>
                     </span>
@@ -45,7 +42,7 @@ export class MetadataCard extends Component<MetadataCardProps> {
                   <div
                     className="card-text small text-muted md-div"
                     dangerouslySetInnerHTML={{
-                      __html: sanitizeHtml(post.embed_description),
+                      __html: sanitize(post.embed_description),
                     }}
                   />
                 )}

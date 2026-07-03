@@ -1,10 +1,10 @@
-import { Component, linkEvent } from "inferno";
+import { Component, InfernoMouseEvent } from "inferno";
 import {
   CreateTagline,
   DeleteTagline,
   MyUserInfo,
   Tagline,
-  UpdateTagline,
+  EditTagline,
 } from "lemmy-js-client";
 import { I18NextService } from "../../services";
 import { MarkdownTextArea } from "../common/markdown-textarea";
@@ -14,9 +14,9 @@ import { Prompt } from "inferno-router";
 interface TaglineFormProps {
   tagline?: Tagline; // If a tagline is given, that means this is an edit
   myUserInfo: MyUserInfo | undefined;
-  onCreate?(form: CreateTagline): void;
-  onEdit?(form: UpdateTagline): void;
-  onDelete?(form: DeleteTagline): void;
+  onCreate?: (form: CreateTagline) => void;
+  onEdit?: (form: EditTagline) => void;
+  onDelete?: (form: DeleteTagline) => void;
 }
 
 interface TaglineFormState {
@@ -33,10 +33,6 @@ export class TaglineForm extends Component<TaglineFormProps, TaglineFormState> {
     clearMarkdown: false,
     bypassNavWarning: true,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   render() {
     const submitTitle = I18NextService.i18n.t(
@@ -63,6 +59,7 @@ export class TaglineForm extends Component<TaglineFormProps, TaglineFormState> {
                 allLanguages={[]}
                 siteLanguages={[]}
                 myUserInfo={this.props.myUserInfo}
+                imageUploadDisabled
               />
             )}
           </div>
@@ -71,16 +68,16 @@ export class TaglineForm extends Component<TaglineFormProps, TaglineFormState> {
               <button
                 className="btn btn-danger me-2"
                 type="submit"
-                onClick={linkEvent(this, this.handleDeleteTagline)}
+                onClick={event => this.handleDeleteTagline(this, event)}
               >
                 {I18NextService.i18n.t("delete")}
               </button>
             )}
             {isChanged && (
               <button
-                className="btn btn-secondary"
+                className="btn btn-light border-light-subtle"
                 type="submit"
-                onClick={linkEvent(this, this.handleSubmitTagline)}
+                onClick={event => this.handleSubmitTagline(this, event)}
               >
                 {submitTitle}
               </button>
@@ -95,7 +92,10 @@ export class TaglineForm extends Component<TaglineFormProps, TaglineFormState> {
     i.setState({ content, bypassNavWarning: false });
   }
 
-  handleDeleteTagline(i: TaglineForm, event: any) {
+  handleDeleteTagline(
+    i: TaglineForm,
+    event: InfernoMouseEvent<HTMLButtonElement>,
+  ) {
     event.preventDefault();
     const id = i.props.tagline?.id;
     if (id) {
@@ -104,7 +104,10 @@ export class TaglineForm extends Component<TaglineFormProps, TaglineFormState> {
     }
   }
 
-  handleSubmitTagline(i: TaglineForm, event: any) {
+  handleSubmitTagline(
+    i: TaglineForm,
+    event: InfernoMouseEvent<HTMLButtonElement>,
+  ) {
     event.preventDefault();
 
     const content = i.state.content ?? "";

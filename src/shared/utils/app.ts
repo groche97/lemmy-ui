@@ -6,9 +6,7 @@ import {
   MyUserInfo,
   PostView,
   RegistrationApplicationView,
-  Search,
   Comment,
-  SearchType,
   PersonView,
   Language,
   Instance,
@@ -18,7 +16,7 @@ import {
   CommunityReport,
   ReportCombinedView,
   Post,
-  PersonContentCombinedView,
+  PostCommentCombinedView,
   PersonId,
   PersonActions,
   Person,
@@ -30,6 +28,17 @@ import {
   PostListingMode,
   MultiCommunity,
   MultiCommunityView,
+  CommentReportResponse,
+  PostReportResponse,
+  PrivateMessageReportResponse,
+  CommunityReportResponse,
+  CommentResponse,
+  PostResponse,
+  ListCommunities,
+  ListPersons,
+  ListMultiCommunities,
+  CreateCommentWarning,
+  CreatePostWarning,
 } from "lemmy-js-client";
 import {
   CommentNodeI,
@@ -46,7 +55,7 @@ import {
   PersonTribute,
   ThemeColor,
 } from "@utils/types";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps } from "inferno-router";
 import {
   HttpService,
   I18NextService,
@@ -56,6 +65,10 @@ import {
 import { isBrowser } from "@utils/browser";
 import Toastify from "toastify-js";
 import { isAnimatedImage } from "./media";
+import { httpBackendUrl } from "./env";
+import { RequestState } from "@services/HttpService";
+import { NoOptionI18nKeys } from "i18next";
+import { StaticRouter } from "inferno-router";
 
 export function buildCommentsTree<T extends CommentSlimView>(
   comments: T[],
@@ -131,16 +144,26 @@ export function commentToFlatNode(cv: CommentView): CommentNodeType {
   return { view: { comment_view: cv, children: [], depth: 0 } };
 }
 
-export function communityRSSUrl(community: Community, sort: string): string {
+export function communityRSSUrl(
+  community: Community,
+  sort: PostSortType = "new",
+): string {
   // Only add the domain for non-local
   const domain = community.local ? "" : `@${hostname(community.ap_id)}`;
 
-  return `/feeds/c/${community.name}${domain}.xml${getQueryString({ sort })}`;
+  return httpBackendUrl(
+    `/feeds/c/${community.name}${domain}.xml${getQueryString({ sort })}`,
+  );
+}
+
+/** This is used for the /c/:name/feed endpoint only. **/
+export function communityRSSUrlLocal(communityName: string) {
+  return httpBackendUrl(`/feeds/c/${communityName}.xml`);
 }
 
 export function multiCommunityRSSUrl(
   multiCommunity: MultiCommunity,
-  sort: string,
+  sort: PostSortType = "new",
 ): string {
   // Only add the domain for non-local
   const domain = multiCommunity.local
@@ -150,10 +173,38 @@ export function multiCommunityRSSUrl(
   return `/feeds/m/${multiCommunity.name}${domain}.xml${getQueryString({ sort })}`;
 }
 
+/** This is used for the /m/:name/feed endpoint only. **/
+export function multiCommunityRSSUrlLocal(multiCommunityName: string) {
+  return httpBackendUrl(`/feeds/m/${multiCommunityName}.xml`);
+}
+
+export function allRSSUrl(queryString: string = ""): string {
+  return httpBackendUrl("/feeds/all.xml" + queryString);
+}
+
+export function localRSSUrl(queryString: string = ""): string {
+  return httpBackendUrl("/feeds/local.xml" + queryString);
+}
+
+export function subscribedRSSUrl(
+  auth: string,
+  queryString: string = "",
+): string {
+  return httpBackendUrl(`/feeds/front/${auth}.xml${queryString}`);
+}
+
+export function profileRSSUrl(username: string): string {
+  return httpBackendUrl(`/feeds/u/${username}.xml`);
+}
+
+export function notificationsRSSUrl(auth: string): string {
+  return httpBackendUrl(`/feeds/notifications/${auth}.xml`);
+}
+
 export async function communitySearch(
   text: string,
 ): Promise<CommunityTribute[]> {
-  const communitiesResponse = await fetchCommunities(text);
+  const communitiesResponse = await searchCommunities(text);
 
   return communitiesResponse.map(cv => ({
     key: `!${cv.community.name}@${hostname(cv.community.ap_id)}`,
@@ -162,9 +213,10 @@ export async function communitySearch(
 }
 
 export function communitySelectName(cv: CommunityView): string {
+  const nameOrTitle = cv.community.title ?? cv.community.name;
   return cv.community.local
-    ? cv.community.title
-    : `!${cv.community.title}@${hostname(cv.community.ap_id)}`;
+    ? nameOrTitle
+    : `!${nameOrTitle}@${hostname(cv.community.ap_id)}`;
 }
 
 export function communityToChoice(cv: CommunityView): Choice {
@@ -282,38 +334,47 @@ export function enableDownvotes(siteRes: GetSiteResponse): boolean {
 }
 
 export function enableNsfw(siteRes?: GetSiteResponse): boolean {
-  return !!siteRes?.site_view.site.content_warning;
+  return !siteRes?.site_view.local_site.nsfw_content_disallowed;
 }
 
-export async function fetchCommunities(q: string) {
-  const res = await fetchSearchResults(q, "communities");
-
-  return res.state === "success"
-    ? res.data.results.filter(s => s.type_ === "community")
-    : [];
-}
-
-export function fetchSearchResults(q: string, type_: SearchType) {
-  const form: Search = {
-    q,
-    type_,
-    sort: "top",
-    listing_type: "all",
+export async function searchCommunities(search_term: string) {
+  const form: ListCommunities = {
+    search_term,
+    sort: "active_monthly",
+    type_: "all",
+    search_title_only: true,
   };
+  const res = await HttpService.client.listCommunities(form);
 
-  return HttpService.client.search(form);
+  return res.state === "success" ? res.data.items : [];
+}
+
+export async function searchMultiCommunities(search_term: string) {
+  const form: ListMultiCommunities = {
+    search_term,
+    sort: "subscribers",
+    type_: "all",
+  };
+  const res = await HttpService.client.listMultiCommunities(form);
+
+  return res.state === "success" ? res.data.items : [];
 }
 
 export async function fetchThemeList(): Promise<string[]> {
-  return fetch("/css/themelist").then(res => res.json());
+  return fetch("/css/themelist")
+    .then(res => res.json())
+    .then(json => json as string[]);
 }
 
-export async function fetchUsers(q: string) {
-  const res = await fetchSearchResults(q, "users");
+export async function searchUsers(search_term: string) {
+  const form: ListPersons = {
+    search_term,
+    sort: "comment_score",
+    type_: "all",
+  };
+  const res = await HttpService.client.listPersons(form);
 
-  return res.state === "success"
-    ? res.data.results.filter(s => s.type_ === "person")
-    : [];
+  return res.state === "success" ? res.data.items : [];
 }
 
 export function getCommentIdFromProps(
@@ -356,7 +417,7 @@ export function getRecipientIdFromProps(
 type PersonContentCombined = Post | Comment;
 
 export function getUncombinedPersonContent(
-  content: PersonContentCombinedView,
+  content: PostCommentCombinedView,
 ): PersonContentCombined {
   switch (content.type_) {
     case "post":
@@ -456,7 +517,7 @@ export function nsfwCheck(
 }
 
 export async function personSearch(text: string): Promise<PersonTribute[]> {
-  const usersResponse = await fetchUsers(text);
+  const usersResponse = await searchUsers(text);
 
   return usersResponse.map(pv => ({
     key: `@${pv.person.name}@${hostname(pv.person.ap_id)}`,
@@ -575,11 +636,17 @@ export function selectableLanguages(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function setIsoData<T extends RouteData>(context: any): IsoData<T> {
   // If its the browser, you need to deserialize the data from the window
   if (isBrowser()) {
     return window.isoData as IsoData<T>; // This cast is wrong for things outside of <ErrorGuard />
-  } else return context.router.staticContext;
+  } else {
+    const {
+      router: { staticContext },
+    } = context as ReturnType<StaticRouter<never, never>["getChildContext"]>;
+    return staticContext as unknown as IsoData<T>;
+  }
 }
 
 export function updateMyUserInfo(myUserInfo: MyUserInfo | undefined) {
@@ -593,6 +660,10 @@ export function updateMyUserInfo(myUserInfo: MyUserInfo | undefined) {
 
 export function showAvatars(myUserInfo: MyUserInfo | undefined): boolean {
   return myUserInfo?.local_user_view.local_user.show_avatars ?? true;
+}
+
+export function showMedia(myUserInfo: MyUserInfo | undefined): boolean {
+  return myUserInfo?.local_user_view.local_user.show_media ?? true;
 }
 
 export function showLocal(isoData: IsoData): boolean {
@@ -625,7 +696,7 @@ export function toast(text: string, background: ThemeColor = "success") {
   }
 }
 
-export async function pictrsDeleteToast(filename: string) {
+export function pictrsDeleteToast(filename: string) {
   if (isBrowser()) {
     const clickToDeleteText = I18NextService.i18n.t("click_to_delete_picture", {
       filename,
@@ -642,27 +713,64 @@ export async function pictrsDeleteToast(filename: string) {
 
     const backgroundColor = `var(--bs-light)`;
 
-    const toast = Toastify({
+    const toastify = Toastify({
       text: clickToDeleteText,
       backgroundColor: backgroundColor,
       gravity: "top",
       position: "right",
       duration: 10000,
-      onClick: async () => {
-        if (toast) {
-          const res = await HttpService.client.deleteMedia({ filename });
-          if (res.state === "success") {
-            alert(deletePictureText);
-          } else {
-            alert(failedDeletePictureText);
-          }
-        }
+      onClick: () => {
+        HttpService.client
+          .deleteMedia({ filename })
+          .then(res => {
+            if (res.state === "success") {
+              toast(deletePictureText, "success");
+            } else {
+              throw new Error();
+            }
+          })
+          .catch(() => {
+            toast(failedDeletePictureText, "danger");
+          });
       },
       close: true,
     });
 
-    toast.showToast();
+    toastify.showToast();
   }
+}
+
+export function reportToast(
+  res: RequestState<
+    | CommentReportResponse
+    | PostReportResponse
+    | PrivateMessageReportResponse
+    | CommunityReportResponse
+  >,
+) {
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("report_created"));
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
+  }
+}
+
+function warnToast(res: RequestState<CommentResponse | PostResponse>) {
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("warning_sent"));
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
+  }
+}
+
+export async function handleWarnComment(form: CreateCommentWarning) {
+  const res = await HttpService.client.warnComment(form);
+  warnToast(res);
+}
+
+export async function handleWarnPost(form: CreatePostWarning) {
+  const res = await HttpService.client.warnPost(form);
+  warnToast(res);
 }
 
 export function updateCommunityBlock(
@@ -780,7 +888,7 @@ export function calculateUpvotePct(upvotes: number, downvotes: number): number {
 
 export function postViewToPersonContentCombinedView(
   pv: PostView,
-): PersonContentCombinedView {
+): PostCommentCombinedView {
   return {
     type_: "post",
     ...pv,
@@ -789,7 +897,7 @@ export function postViewToPersonContentCombinedView(
 
 export function commentViewToPersonContentCombinedView(
   cv: CommentView,
-): PersonContentCombinedView {
+): PostCommentCombinedView {
   return {
     type_: "comment",
     ...cv,
@@ -819,18 +927,9 @@ export function postIsInteractable(
 export function canViewCommunity(cv: CommunityView): boolean {
   return (
     cv.community.visibility !== "private" ||
-    cv.community_actions?.follow_state === "accepted"
+    cv.community_actions?.follow_state === "accepted" ||
+    cv.can_mod
   );
-}
-
-/**
- * Hide the image if its in the prop, or you have hide_media in your local user settings.
- **/
-export function hideImages(
-  hideImage: boolean,
-  user: MyUserInfo | undefined,
-): boolean {
-  return hideImage || !!user?.local_user_view.local_user.hide_media;
 }
 
 /**
@@ -842,7 +941,7 @@ export function hideAnimatedImage(
 ): boolean {
   return (
     isAnimatedImage(url) &&
-    !user?.local_user_view.local_user.enable_animated_images
+    !user?.local_user_view.local_user.animated_images_enabled
   );
 }
 

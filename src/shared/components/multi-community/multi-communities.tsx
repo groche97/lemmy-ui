@@ -2,21 +2,22 @@ import { editMultiCommunity, setIsoData, showLocal } from "@utils/app";
 import {
   getQueryParams,
   getQueryString,
-  cursorComponents,
   resourcesSettled,
   numToSI,
 } from "@utils/helpers";
-import type { DirectionalCursor, QueryParams } from "@utils/types";
+import type { QueryParams } from "@utils/types";
 import { RouteDataResponse } from "@utils/types";
-import { Component } from "inferno";
+import { Component, FormEvent, InfernoNode } from "inferno";
 import {
   LemmyHttp,
   ListMultiCommunities,
-  ListMultiCommunitiesResponse,
+  PagedResponse,
+  MultiCommunityView,
   MultiCommunityId,
   MultiCommunityListingType,
   MultiCommunityResponse,
   MultiCommunitySortType,
+  PaginationCursor,
 } from "lemmy-js-client";
 import { InitialFetchRequest } from "@utils/types";
 import { FirstLoadService } from "@services/FirstLoadService";
@@ -30,26 +31,27 @@ import {
   wrapClient,
 } from "@services/HttpService";
 import { HtmlTags } from "@components/common/html-tags";
-import { Spinner } from "@components/common/icon";
-import { MultiCommunitiesSortSelect } from "@components/common/sort-select";
+import { Icon, Spinner } from "@components/common/icon";
+import { MultiCommunitiesSortDropdown } from "@components/common/sort-dropdown";
 import { SubscribeButton } from "@components/common/subscribe-button";
 import { multiCommunityLimit } from "@utils/config";
 import { getHttpBaseInternal } from "@utils/env";
 import { IRoutePropsWithFetch } from "@utils/routes";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { scrollMixin } from "../mixins/scroll-mixin";
 import { isBrowser } from "@utils/browser";
 import { PaginatorCursor } from "@components/common/paginator-cursor";
-import { TableHr } from "@components/common/tables";
+import { ResponsiveTableRowHeader, TableHr } from "@components/common/tables";
 import { MultiCommunityLink } from "./multi-community-link";
-import { MultiCommunityListingTypeSelect } from "@components/common/multi-community-listing-type-select";
+import { MultiCommunityListingTypeDropdown } from "@components/common/multi-community-listing-type-dropdown";
+import { CreateMultiCommunityButton } from "@components/common/content-actions/create-item-buttons";
 
 type MultiCommunitiesData = RouteDataResponse<{
-  listMultiCommunitiesRes: ListMultiCommunitiesResponse;
+  listMultiCommunitiesRes: PagedResponse<MultiCommunityView>;
 }>;
 
 interface State {
-  listMultiCommunitiesRes: RequestState<ListMultiCommunitiesResponse>;
+  listMultiCommunitiesRes: RequestState<PagedResponse<MultiCommunityView>>;
   searchText: string;
   isIsomorphic: boolean;
 }
@@ -57,7 +59,7 @@ interface State {
 interface Props {
   listingType: MultiCommunityListingType;
   sort: MultiCommunitySortType;
-  cursor?: DirectionalCursor;
+  cursor?: PaginationCursor;
 }
 
 function getListingTypeFromQuery(
@@ -102,7 +104,7 @@ export class MultiCommunities extends Component<RouteProps, State> {
     return resourcesSettled([this.state.listMultiCommunitiesRes]);
   }
 
-  constructor(props: RouteProps, context: any) {
+  constructor(props: RouteProps, context: object) {
     super(props, context);
 
     // Only fetch the data if coming from another route
@@ -123,8 +125,8 @@ export class MultiCommunities extends Component<RouteProps, State> {
     }
   }
 
-  componentWillReceiveProps(nextProps: RouteProps) {
-    this.refetch(nextProps);
+  async componentWillReceiveProps(nextProps: RouteProps) {
+    await this.refetch(nextProps);
   }
 
   get documentTitle(): string {
@@ -133,10 +135,10 @@ export class MultiCommunities extends Component<RouteProps, State> {
     }`;
   }
 
-  renderListingsTable() {
-    const nameCols = "col-12 col-md-9";
+  renderListingsTable(): InfernoNode | void {
+    const nameCols = "col-6 col-md-9";
     // 3 of these: subscribers, communities, subscribe
-    const countCols = "col-4 col-md-1";
+    const countCols = "col-6 col-md-1";
 
     switch (this.state.listMultiCommunitiesRes.state) {
       case "loading":
@@ -148,49 +150,52 @@ export class MultiCommunities extends Component<RouteProps, State> {
       case "success": {
         return (
           <div id="community_table">
-            <div className="row">
-              <div className={`${nameCols} fw-bold`}>
-                {I18NextService.i18n.t("name")}
+            <div className="d-none d-md-block">
+              <div className="row">
+                <div className={`${nameCols} fw-bold`}>
+                  {I18NextService.i18n.t("name")}
+                </div>
+                <div className={`${countCols} fw-bold`}>
+                  {I18NextService.i18n.t("subscribers")}
+                </div>
+                <div className={`${countCols} fw-bold`}>
+                  {I18NextService.i18n.t("communities")}
+                </div>
               </div>
-              <div className={`${countCols} fw-bold`}>
-                {I18NextService.i18n.t("subscribers")}
-              </div>
-              <div className={`${countCols} fw-bold`}>
-                {I18NextService.i18n.t("communities")}
-              </div>
+              <TableHr />
             </div>
-            <TableHr />
-            {this.state.listMultiCommunitiesRes.data.multi_communities.map(
-              v => (
-                <>
-                  <div className="row" key={v.multi.id}>
-                    <div className={nameCols}>
-                      <MultiCommunityLink
-                        multiCommunity={v.multi}
-                        myUserInfo={this.isoData.myUserInfo}
-                      />
-                    </div>
-                    <div className={countCols}>
-                      {numToSI(v.multi.subscribers)}
-                    </div>
-                    <div className={countCols}>
-                      {numToSI(v.multi.communities)}
-                    </div>
-                    <div className={countCols}>
-                      <SubscribeButton
-                        followState={v.follow_state}
-                        apId={v.multi.ap_id}
-                        onFollow={() => handleFollow(this, v.multi.id, true)}
-                        onUnFollow={() => handleFollow(this, v.multi.id, false)}
-                        showRemoteFetch={!this.isoData.myUserInfo}
-                        isLink
-                      />
-                    </div>
+            {this.state.listMultiCommunitiesRes.data.items.map(v => (
+              <>
+                <div className="row">
+                  <ResponsiveTableRowHeader title={"name"} />
+                  <div className={nameCols}>
+                    <MultiCommunityLink
+                      multiCommunity={v.multi}
+                      myUserInfo={this.isoData.myUserInfo}
+                    />
                   </div>
-                  <hr />
-                </>
-              ),
-            )}
+                  <ResponsiveTableRowHeader title={"subscribers"} />
+                  <div className={countCols}>
+                    {numToSI(v.multi.subscribers)}
+                  </div>
+                  <ResponsiveTableRowHeader title={"communities"} />
+                  <div className={countCols}>
+                    {numToSI(v.multi.communities)}
+                  </div>
+                  <div className={countCols}>
+                    <SubscribeButton
+                      followState={v.follow_state}
+                      apId={v.multi.ap_id}
+                      onFollow={() => handleFollow(this, v.multi.id, true)}
+                      onUnFollow={() => handleFollow(this, v.multi.id, false)}
+                      showRemoteFetch={!this.isoData.myUserInfo}
+                      isLink
+                    />
+                  </div>
+                </div>
+                <hr />
+              </>
+            ))}
           </div>
         );
       }
@@ -199,33 +204,41 @@ export class MultiCommunities extends Component<RouteProps, State> {
 
   render() {
     const { listingType, sort } = this.props;
+    const myUserInfo = this.isoData.myUserInfo;
+
     return (
       <div className="multi-communities container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         <div>
           <h1 className="h4 mb-4">
             {I18NextService.i18n.t("multi_communities")}
           </h1>
-          <div className="row g-3 align-items-center mb-2">
-            <div className="col-auto">
-              <MultiCommunityListingTypeSelect
-                type_={listingType}
+          <div className="row row-cols-auto align-items-center g-3 mb-2">
+            <div className="col">
+              <MultiCommunityListingTypeDropdown
+                currentOption={listingType}
                 showLocal={showLocal(this.isoData)}
                 showSubscribed
-                myUserInfo={this.isoData.myUserInfo}
-                onChange={val => handleListingTypeChange(this, val)}
+                onSelect={val => handleListingTypeChange(this, val)}
               />
             </div>
-            <div className="col-auto me-auto">
-              <MultiCommunitiesSortSelect
-                current={sort}
-                onChange={val => handleSortChange(this, val)}
+            <div className="col">
+              <MultiCommunitiesSortDropdown
+                currentOption={sort}
+                onSelect={val => handleSortChange(this, val)}
+                showLabel
               />
             </div>
-            <div className="col-auto">{this.searchForm()}</div>
+            <div className="col me-auto">
+              <CreateMultiCommunityButton
+                myUserInfo={myUserInfo}
+                blockButton={false}
+              />
+            </div>
+            <div className="col">{this.searchForm()}</div>
           </div>
           <div>{this.renderListingsTable()}</div>
           <PaginatorCursor
@@ -240,32 +253,31 @@ export class MultiCommunities extends Component<RouteProps, State> {
 
   searchForm() {
     return (
-      <form className="row" onSubmit={e => handleSearchSubmit(this, e)}>
-        <div className="col-auto">
-          <input
-            type="text"
-            id="communities-search"
-            className="form-control"
-            value={this.state.searchText}
-            placeholder={`${I18NextService.i18n.t("search")}...`}
-            onInput={e => handleSearchChange(this, e)}
-            required
-            minLength={3}
-          />
-        </div>
-        <div className="col-auto">
-          <label className="visually-hidden" htmlFor="communities-search">
-            {I18NextService.i18n.t("search")}
-          </label>
-          <button type="submit" className="btn btn-secondary">
-            <span>{I18NextService.i18n.t("search")}</span>
-          </button>
-        </div>
+      <form className="d-flex col" onSubmit={e => handleSearchSubmit(this, e)}>
+        <input
+          type="text"
+          id="communities-search"
+          className="form-control"
+          value={this.state.searchText}
+          placeholder={`${I18NextService.i18n.t("search")}...`}
+          onInput={e => handleSearchChange(this, e)}
+          required
+          minLength={3}
+        />
+        <label className="visually-hidden" htmlFor="communities-search">
+          {I18NextService.i18n.t("search")}
+        </label>
+        <button
+          type="submit"
+          className="btn btn-light border-light-subtle ms-1"
+        >
+          <Icon icon="search" />
+        </button>
       </form>
     );
   }
 
-  async updateUrl(props: Partial<Props>) {
+  updateUrl(props: Partial<Props>) {
     const { listingType, sort } = { ...this.props, ...props };
 
     const queryParams: QueryParams<Props> = {
@@ -276,10 +288,10 @@ export class MultiCommunities extends Component<RouteProps, State> {
     this.props.history.push(`/multi_communities${getQueryString(queryParams)}`);
   }
 
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
     query: { listingType, sort, cursor },
-  }: InitialFetchRequest<PathProps, Props>): Promise<MultiCommunitiesData> {
+  }: InitialFetchRequest<PathProps, Props>): Promise<MultiCommunitiesData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -288,13 +300,13 @@ export class MultiCommunities extends Component<RouteProps, State> {
       type_: listingType,
       sort,
       limit: multiCommunityLimit,
-      ...cursorComponents(cursor),
+      page_cursor: cursor,
     };
 
     return {
       listMultiCommunitiesRes: await client.listMultiCommunities(form),
     };
-  }
+  };
 
   fetchToken?: symbol;
   async refetch({ listingType, sort, cursor }: Props) {
@@ -305,7 +317,7 @@ export class MultiCommunities extends Component<RouteProps, State> {
         type_: listingType,
         sort: sort,
         limit: multiCommunityLimit,
-        ...cursorComponents(cursor),
+        page_cursor: cursor,
       });
     if (token === this.fetchToken) {
       this.setState({ listMultiCommunitiesRes });
@@ -318,9 +330,9 @@ export class MultiCommunities extends Component<RouteProps, State> {
         s.listMultiCommunitiesRes.state === "success" &&
         res.state === "success"
       ) {
-        s.listMultiCommunitiesRes.data.multi_communities = editMultiCommunity(
+        s.listMultiCommunitiesRes.data.items = editMultiCommunity(
           res.data.multi_community_view,
-          s.listMultiCommunitiesRes.data.multi_communities,
+          s.listMultiCommunitiesRes.data.items,
         );
       }
       return s;
@@ -328,7 +340,7 @@ export class MultiCommunities extends Component<RouteProps, State> {
   }
 }
 
-function handlePageChange(i: MultiCommunities, cursor?: DirectionalCursor) {
+function handlePageChange(i: MultiCommunities, cursor?: PaginationCursor) {
   i.updateUrl({ cursor });
 }
 
@@ -346,15 +358,22 @@ function handleListingTypeChange(
   });
 }
 
-function handleSearchChange(i: MultiCommunities, event: any) {
+function handleSearchChange(
+  i: MultiCommunities,
+  event: FormEvent<HTMLInputElement>,
+) {
   i.setState({ searchText: event.target.value });
 }
 
-function handleSearchSubmit(i: MultiCommunities, event: any) {
+function handleSearchSubmit(
+  i: MultiCommunities,
+  event: FormEvent<HTMLFormElement>,
+) {
   event.preventDefault();
   const searchParamEncoded = i.state.searchText;
   const { listingType } = i.props;
-  i.context.router.history.push(
+  const context = i.context as RouterContext;
+  context.router.history.push(
     `/search${getQueryString({ q: searchParamEncoded, type: "multi_communities", listingType })}`,
   );
 }

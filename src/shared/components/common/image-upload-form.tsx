@@ -1,6 +1,6 @@
 import { randomStr } from "@utils/helpers";
 import classNames from "classnames";
-import { Component, linkEvent } from "inferno";
+import { Component, FormEvent } from "inferno";
 import { HttpService, I18NextService } from "../../services";
 import { toast } from "@utils/app";
 import { Icon, Spinner } from "./icon";
@@ -18,8 +18,8 @@ type BaseProps = {
   imageSrc?: string;
   rounded?: boolean;
   disabled: boolean;
-  onImageChange: (imageSrc?: string) => void;
   noConfirmation?: boolean;
+  onImageChange: (imageSrc?: string) => void;
 };
 
 type SimpleUploadKeys = keyof Pick<
@@ -72,10 +72,6 @@ export class ImageUploadForm extends Component<
     loading: false,
   };
 
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
   render() {
     return (
       <form className="image-upload-form d-inline">
@@ -98,7 +94,7 @@ export class ImageUploadForm extends Component<
               <button
                 className="position-absolute d-block p-0 end-0 border-0 top-0 bg-transparent text-white"
                 type="button"
-                onClick={linkEvent(this, this.handleRemoveImage)}
+                onClick={() => this.handleRemoveImage(this)}
                 aria-label={I18NextService.i18n.t("remove")}
               >
                 <Icon icon="x" classes="mini-overlay" />
@@ -122,21 +118,24 @@ export class ImageUploadForm extends Component<
           className="small form-control"
           name={this.id}
           disabled={this.props.disabled}
-          onChange={linkEvent(this, this.guardedImageUpload)}
+          onChange={event => this.guardedImageUpload(this, event)}
         />
       </form>
     );
   }
 
-  async guardedImageUpload(i: ImageUploadForm, event: any) {
-    const image = event.target.files[0] as File;
+  async guardedImageUpload(
+    i: ImageUploadForm,
+    event: FormEvent<HTMLInputElement>,
+  ) {
+    const image = event.target.files?.[0];
     i.setState({ pendingUpload: image });
     if (i.props.noConfirmation) {
-      i.performImageUpload(i);
+      await i.performImageUpload(i);
     }
   }
 
-  performImageUpload(i: ImageUploadForm) {
+  async performImageUpload(i: ImageUploadForm) {
     if (!i.state.pendingUpload) {
       return;
     }
@@ -157,16 +156,15 @@ export class ImageUploadForm extends Component<
       uploadPromise = HttpService.client[i.props.uploadKey]({ image });
     }
 
-    uploadPromise.then((res: RequestState<UploadImageResponse>) => {
-      if (res.state === "success") {
-        i.props.onImageChange(res.data.image_url);
-        toast(I18NextService.i18n.t("image_uploaded"));
-      } else if (res.state === "failed") {
-        toast(res.err.name, "danger");
-      }
+    const res = await uploadPromise;
+    if (res.state === "success") {
+      i.props.onImageChange(res.data.image_url);
+      toast(I18NextService.i18n.t("image_uploaded"));
+    } else if (res.state === "failed") {
+      toast(res.err.name, "danger");
+    }
 
-      i.setState({ loading: false });
-    });
+    i.setState({ loading: false });
   }
 
   async handleRemoveImage(i: ImageUploadForm) {

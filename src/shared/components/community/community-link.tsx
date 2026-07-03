@@ -1,25 +1,23 @@
-import { hideAnimatedImage, hideImages, showAvatars } from "@utils/app";
+import { hideAnimatedImage, showAvatars, showMedia } from "@utils/app";
 import { hostname } from "@utils/helpers";
 import { Component } from "inferno";
 import { Link } from "inferno-router";
 import { Community, MyUserInfo } from "lemmy-js-client";
 import { relTags } from "@utils/config";
 import { PictrsImage } from "../common/pictrs-image";
+import classNames from "classnames";
+import { I18NextService } from "@services/index";
 
 interface CommunityLinkProps {
   community: Community;
   realLink?: boolean;
   useApubName?: boolean;
-  muted?: boolean;
+  muted: boolean;
   hideAvatar?: boolean;
   myUserInfo: MyUserInfo | undefined;
 }
 
-export class CommunityLink extends Component<CommunityLinkProps, any> {
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
+export class CommunityLink extends Component<CommunityLinkProps, never> {
   render() {
     const { community, useApubName } = this.props;
 
@@ -29,7 +27,9 @@ export class CommunityLink extends Component<CommunityLinkProps, any> {
 
     const { link, serverStr } = communityLink(community, this.props.realLink);
 
-    const classes = `community-link ${this.props.muted ? "text-muted" : ""}`;
+    const classes = classNames(`community-link`, {
+      "text-muted": this.props.muted,
+    });
 
     return !this.props.realLink ? (
       <Link title={title} className={classes} to={link}>
@@ -52,16 +52,18 @@ export class CommunityLink extends Component<CommunityLinkProps, any> {
 
     const hideAvatar =
       // Hide the avatar if you have hide images on
-      hideImages(this.props.hideAvatar ?? false, myUserInfo) ||
+      this.props.hideAvatar ||
       // Or its an animated image
       hideAnimatedImage(icon ?? "", myUserInfo) ||
       // Or you have hide avatars in your user settings
-      !showAvatars(this.props.myUserInfo);
+      !showAvatars(this.props.myUserInfo) ||
+      // Or you have hide media in your user settings
+      !showMedia(myUserInfo);
 
     return (
       <>
         {!hideAvatar && !this.props.community.removed && icon && (
-          <PictrsImage src={icon} icon nsfw={nsfw} />
+          <PictrsImage src={icon} type="icon" nsfw={nsfw} />
         )}
         <span className="overflow-wrap-anywhere">
           {title}
@@ -93,4 +95,30 @@ export function communityLink(
 
     return { link, serverStr };
   }
+}
+
+type CommunitySettingLinkProps = {
+  community: Community;
+};
+export function CommunitySettingsLink({
+  community,
+}: CommunitySettingLinkProps) {
+  const classes = classNames(
+    "btn btn-light border-light-subtle d-block mb-2 w-100",
+    {
+      "no-click": community.removed,
+    },
+  );
+
+  const link = `${communityLink(community).link}/settings`;
+
+  return (
+    <Link className={classes} to={link}>
+      {I18NextService.i18n.t("settings")}
+    </Link>
+  );
+}
+
+export function communityName(community: Community): string {
+  return `!${community.name}@${hostname(community.ap_id)}`;
 }

@@ -12,7 +12,7 @@ import { toast } from "@utils/app";
 import { HtmlTags } from "../common/html-tags";
 import { Spinner } from "../common/icon";
 import { simpleScrollMixin } from "../mixins/scroll-mixin";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { isBrowser } from "@utils/browser";
 
 interface State {
@@ -29,10 +29,6 @@ export class VerifyEmail extends Component<
   state: State = {
     verifyRes: EMPTY_REQUEST,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   async verify() {
     this.setState({
@@ -65,10 +61,10 @@ export class VerifyEmail extends Component<
 
   render() {
     return (
-      <div className="verfy-email container-lg">
+      <div className="verify-email container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         <div className="row">
           <div className="col-12 col-lg-6 offset-lg-3 mb-4">

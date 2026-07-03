@@ -1,9 +1,9 @@
 import {
   Component,
+  FormEvent,
   InfernoNode,
   RefObject,
   createRef,
-  linkEvent,
 } from "inferno";
 import { I18NextService } from "../../../services/I18NextService";
 import { PurgeWarning, Spinner } from "../icon";
@@ -23,35 +23,46 @@ export interface BanUpdateForm {
 
 interface ModActionFormModalPropsSiteBan {
   modActionType: "site-ban";
-  onSubmit(form: BanUpdateForm): void;
   creator: Person;
   isBanned: boolean;
+  onSubmit: (form: BanUpdateForm) => void;
 }
 
 interface ModActionFormModalPropsCommunityBan {
   modActionType: "community-ban";
-  onSubmit(form: BanUpdateForm): void;
   creator: Person;
   community?: Community;
   isBanned: boolean;
+  onSubmit: (form: BanUpdateForm) => void;
 }
 
 interface ModActionFormModalPropsPurgePerson {
   modActionType: "purge-person";
-  onSubmit(reason: string): void;
   creator: Person;
+  onSubmit: (reason: string) => void;
+}
+
+interface ModActionFormModalPropsPurgeCommunity {
+  modActionType: "purge-community";
+  community: Community;
+  onSubmit: (reason: string) => void;
 }
 
 interface ModActionFormModalPropsRemove {
-  modActionType: "remove-post" | "remove-comment";
-  onSubmit(reason: string): void;
+  modActionType: "remove-post" | "remove-comment" | "remove-community";
   isRemoved: boolean;
+  onSubmit: (reason: string) => void;
 }
 
 interface ModActionFormModalPropsLock {
   modActionType: "lock-post" | "lock-comment";
-  onSubmit(reason: string): void;
   isLocked: boolean;
+  onSubmit: (reason: string) => void;
+}
+
+interface ModActionFormModalPropsWarn {
+  modActionType: "warn-post" | "warn-comment";
+  onSubmit: (reason: string) => void;
 }
 
 interface ModActionFormModalPropsRest {
@@ -61,7 +72,7 @@ interface ModActionFormModalPropsRest {
     | "report-message"
     | "purge-post"
     | "purge-comment";
-  onSubmit(reason: string): void;
+  onSubmit: (reason: string) => void;
 }
 
 type ModActionFormModalProps = (
@@ -69,23 +80,35 @@ type ModActionFormModalProps = (
   | ModActionFormModalPropsCommunityBan
   | ModActionFormModalPropsRest
   | ModActionFormModalPropsPurgePerson
+  | ModActionFormModalPropsPurgeCommunity
   | ModActionFormModalPropsRemove
   | ModActionFormModalPropsLock
-) & { onCancel(): void; show: boolean; children?: InfernoNode };
+  | ModActionFormModalPropsWarn
+) & {
+  onCancel: () => void;
+  show: boolean;
+  loading: boolean;
+  children?: InfernoNode;
+};
 
 interface ModActionFormFormState {
-  loading: boolean;
   reason: string;
   daysUntilExpire?: number;
   shouldRemoveOrRestoreData?: boolean;
   shouldPermaBan?: boolean;
 }
 
-function handleReasonChange(i: ModActionFormModal, event: any) {
+function handleReasonChange(
+  i: ModActionFormModal,
+  event: FormEvent<HTMLInputElement>,
+) {
   i.setState({ reason: event.target.value });
 }
 
-function handleExpiryChange(i: ModActionFormModal, event: any) {
+function handleExpiryChange(
+  i: ModActionFormModal,
+  event: FormEvent<HTMLInputElement>,
+) {
   i.setState({ daysUntilExpire: parseInt(event.target.value, 10) });
 }
 
@@ -104,9 +127,11 @@ function handleTogglePermaBan(i: ModActionFormModal) {
   }));
 }
 
-function handleSubmit(i: ModActionFormModal, event: any) {
+function handleSubmit(
+  i: ModActionFormModal,
+  event: FormEvent<HTMLFormElement>,
+) {
   event.preventDefault();
-  i.setState({ loading: true });
 
   if (i.isBanModal) {
     i.props.onSubmit({
@@ -119,7 +144,6 @@ function handleSubmit(i: ModActionFormModal, event: any) {
   }
 
   i.setState({
-    loading: false,
     reason: "",
   });
 }
@@ -133,11 +157,10 @@ export default class ModActionFormModal extends Component<
   private reasonRef: RefObject<HTMLInputElement>;
   modal?: Modal;
   state: ModActionFormFormState = {
-    loading: false,
     reason: "",
   };
 
-  constructor(props: ModActionFormModalProps, context: any) {
+  constructor(props: ModActionFormModalProps, context: object) {
     super(props, context);
     this.modalDivRef = createRef();
     this.reasonRef = createRef();
@@ -149,7 +172,6 @@ export default class ModActionFormModal extends Component<
 
   render() {
     const {
-      loading,
       reason,
       daysUntilExpire,
       shouldRemoveOrRestoreData,
@@ -157,7 +179,7 @@ export default class ModActionFormModal extends Component<
     } = this.state;
     const reasonId = `mod-form-reason-${randomStr()}`;
     const expiresId = `mod-form-expires-${randomStr()}`;
-    const { modActionType, onCancel } = this.props;
+    const { modActionType, onCancel, loading } = this.props;
 
     const formId = `mod-action-form-${randomStr()}`;
 
@@ -201,7 +223,7 @@ export default class ModActionFormModal extends Component<
                 </>
               ) : (
                 <form
-                  onSubmit={linkEvent(this, handleSubmit)}
+                  onSubmit={event => handleSubmit(this, event)}
                   className="p-3 w-100 container"
                   id={formId}
                 >
@@ -222,7 +244,7 @@ export default class ModActionFormModal extends Component<
                         placeholder={I18NextService.i18n.t("reason")}
                         required
                         value={reason}
-                        onInput={linkEvent(this, handleReasonChange)}
+                        onInput={event => handleReasonChange(this, event)}
                         ref={this.reasonRef}
                       />
                     </div>
@@ -240,7 +262,7 @@ export default class ModActionFormModal extends Component<
                           )}
                           min={1}
                           value={daysUntilExpire}
-                          onInput={linkEvent(this, handleExpiryChange)}
+                          onInput={event => handleExpiryChange(this, event)}
                           required
                         />
                       </div>
@@ -258,7 +280,7 @@ export default class ModActionFormModal extends Component<
                               className="form-check-input user-select-none"
                               type="checkbox"
                               checked={shouldRemoveOrRestoreData}
-                              onChange={linkEvent(this, handleToggleRemove)}
+                              onChange={() => handleToggleRemove(this)}
                             />
                             {I18NextService.i18n.t("remove_content")}
                           </label>
@@ -271,7 +293,7 @@ export default class ModActionFormModal extends Component<
                             <input
                               className="form-check-input"
                               type="checkbox"
-                              onChange={linkEvent(this, handleTogglePermaBan)}
+                              onChange={() => handleTogglePermaBan(this)}
                               checked={shouldPermaBan}
                             />
                             {I18NextService.i18n.t("permanently_ban")}
@@ -286,7 +308,7 @@ export default class ModActionFormModal extends Component<
             <footer className="modal-footer">
               <button
                 type="submit"
-                className="btn btn-secondary me-3"
+                className="btn btn-light border-light-subtle me-3"
                 form={formId}
                 disabled={loading}
               >
@@ -360,6 +382,12 @@ export default class ModActionFormModal extends Component<
         });
       }
 
+      case "purge-community": {
+        return I18NextService.i18n.t("purge_community_with_name", {
+          community: getApubName(this.props.community),
+        });
+      }
+
       case "remove-post": {
         return I18NextService.i18n.t(
           this.props.isRemoved ? "restore_post" : "remove_post",
@@ -369,6 +397,12 @@ export default class ModActionFormModal extends Component<
       case "remove-comment": {
         return I18NextService.i18n.t(
           this.props.isRemoved ? "restore_comment" : "remove_comment",
+        );
+      }
+
+      case "remove-community": {
+        return I18NextService.i18n.t(
+          this.props.isRemoved ? "restore_community" : "remove_community",
         );
       }
 
@@ -393,6 +427,10 @@ export default class ModActionFormModal extends Component<
           this.props.isLocked ? "unlock_comment" : "lock_comment",
         );
       }
+      case "warn-post":
+      case "warn-comment": {
+        return I18NextService.i18n.t("warn_user");
+      }
     }
   }
 
@@ -405,11 +443,13 @@ export default class ModActionFormModal extends Component<
 
       case "purge-post":
       case "purge-comment":
+      case "purge-community":
       case "purge-person": {
         return I18NextService.i18n.t("purge");
       }
 
       case "remove-post":
+      case "remove-community":
       case "remove-comment": {
         return I18NextService.i18n.t(
           this.props.isRemoved ? "restore" : "remove",
@@ -431,6 +471,10 @@ export default class ModActionFormModal extends Component<
           this.props.isLocked ? "unlock_comment" : "lock_comment",
         );
       }
+      case "warn-post":
+      case "warn-comment": {
+        return I18NextService.i18n.t("warn_user");
+      }
     }
   }
 
@@ -450,12 +494,14 @@ export default class ModActionFormModal extends Component<
 
       case "purge-post":
       case "purge-comment":
+      case "purge-community":
       case "purge-person": {
         translation = "purging";
         break;
       }
 
       case "remove-post":
+      case "remove-community":
       case "remove-comment": {
         translation = this.props.isRemoved ? "restoring" : "removing";
         break;
@@ -472,6 +518,10 @@ export default class ModActionFormModal extends Component<
       case "lock-comment": {
         translation = this.props.isLocked ? "unlocking" : "locking";
         break;
+      }
+      case "warn-post":
+      case "warn-comment": {
+        return I18NextService.i18n.t("warn_user");
       }
     }
 

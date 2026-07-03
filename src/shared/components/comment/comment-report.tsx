@@ -1,4 +1,4 @@
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { Component } from "inferno";
 import { T } from "inferno-i18next-dess";
 import {
   CommentReportView,
@@ -10,10 +10,8 @@ import {
   ResolveCommentReport,
 } from "lemmy-js-client";
 import { I18NextService } from "../../services";
-import { Icon, Spinner } from "../common/icon";
 import { PersonListing } from "../person/person-listing";
 import { CommentNode } from "./comment-node";
-import { EMPTY_REQUEST } from "../../services/HttpService";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import ActionButton from "@components/common/content-actions/action-button";
 import {
@@ -28,14 +26,14 @@ interface CommentReportProps {
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
   admins: PersonView[];
-  onResolveReport(form: ResolveCommentReport): void;
-  onRemoveComment(form: RemoveComment): void;
-  onModBanFromCommunity(form: BanFromCommunityData): void;
-  onAdminBan(form: BanFromSiteData): void;
+  loading: boolean;
+  onResolveReport: (form: ResolveCommentReport) => void;
+  onRemoveComment: (form: RemoveComment) => void;
+  onModBanFromCommunity: (form: BanFromCommunityData) => void;
+  onAdminBan: (form: BanFromSiteData) => void;
 }
 
 interface CommentReportState {
-  loading: boolean;
   showRemoveCommentDialog: boolean;
 }
 
@@ -45,23 +43,8 @@ export class CommentReport extends Component<
   CommentReportState
 > {
   state: CommentReportState = {
-    loading: false,
     showRemoveCommentDialog: false,
   };
-  constructor(props: any, context: any) {
-    super(props, context);
-    this.handleModBanFromCommunity = this.handleModBanFromCommunity.bind(this);
-    this.handleAdminBan = this.handleAdminBan.bind(this);
-    this.handleRemoveComment = this.handleRemoveComment.bind(this);
-  }
-
-  componentWillReceiveProps(
-    nextProps: Readonly<{ children?: InfernoNode } & CommentReportProps>,
-  ): void {
-    if (this.props !== nextProps) {
-      this.setState({ loading: false });
-    }
-  }
 
   render() {
     const r = this.props.report;
@@ -86,7 +69,7 @@ export class CommentReport extends Component<
       can_mod: true, // TODO: ?
       creator_banned: r.creator_banned,
       creator_banned_from_community: r.creator_banned_from_community,
-      post_tags: [],
+      tags: [],
     };
 
     return (
@@ -95,34 +78,48 @@ export class CommentReport extends Component<
           node={commentToFlatNode(comment_view)}
           admins={this.props.admins}
           viewType={"flat"}
+          createLoading={undefined}
+          editLoading={undefined}
+          markReadLoading={undefined}
+          fetchChildrenLoading={undefined}
+          voteLoading={undefined}
           viewOnly
+          noBorder
           showCommunity
           showContext={false}
+          showBadgeForPostCreator={false}
+          mutePersonName={false}
+          muteCommunityName={false}
+          hideAvatar={false}
           allLanguages={[]}
           siteLanguages={[]}
           hideImages
           myUserInfo={this.props.myUserInfo}
           localSite={this.props.localSite}
+          showMarkRead={"hide"}
           // All of these are unused, since its viewonly
-          onSaveComment={async () => {}}
-          onBlockPerson={async () => {}}
-          onBlockCommunity={async () => {}}
-          onDeleteComment={async () => {}}
-          onRemoveComment={async () => {}}
-          onCommentVote={async () => {}}
-          onCommentReport={async () => {}}
-          onDistinguishComment={async () => {}}
-          onAddModToCommunity={async () => {}}
-          onAddAdmin={async () => {}}
-          onTransferCommunity={async () => {}}
-          onPurgeComment={async () => {}}
-          onPurgePerson={async () => {}}
-          onBanPersonFromCommunity={async () => {}}
-          onBanPerson={async () => {}}
-          onCreateComment={async () => Promise.resolve(EMPTY_REQUEST)}
-          onEditComment={() => Promise.resolve(EMPTY_REQUEST)}
-          onPersonNote={async () => {}}
-          onLockComment={async () => {}}
+          onSaveComment={() => {}}
+          onBlockPerson={() => {}}
+          onBlockCommunity={() => {}}
+          onDeleteComment={() => {}}
+          onRemoveComment={() => {}}
+          onCommentVote={() => {}}
+          onCommentReport={() => {}}
+          onDistinguishComment={() => {}}
+          onAddModToCommunity={() => {}}
+          onAddAdmin={() => {}}
+          onTransferCommunity={() => {}}
+          onPurgeComment={() => {}}
+          onPurgePerson={() => {}}
+          onBanPersonFromCommunity={() => {}}
+          onBanPerson={() => {}}
+          onCreateComment={() => {}}
+          onEditComment={() => {}}
+          onPersonNote={() => {}}
+          onLockComment={() => {}}
+          onWarnComment={() => {}}
+          onMarkRead={() => {}}
+          onFetchChildren={() => {}}
         />
         <div>
           {I18NextService.i18n.t("reporter")}:{" "}
@@ -130,6 +127,7 @@ export class CommentReport extends Component<
             person={r.creator}
             banned={false}
             myUserInfo={this.props.myUserInfo}
+            muted={false}
           />
         </div>
         <div>
@@ -144,6 +142,7 @@ export class CommentReport extends Component<
                   person={r.resolver}
                   banned={false}
                   myUserInfo={this.props.myUserInfo}
+                  muted={false}
                 />
               </T>
             ) : (
@@ -153,106 +152,110 @@ export class CommentReport extends Component<
                   person={r.resolver}
                   banned={false}
                   myUserInfo={this.props.myUserInfo}
+                  muted={false}
                 />
               </T>
             )}
           </div>
         )}
-        <button
-          className="btn btn-link btn-animate text-muted py-0"
-          onClick={linkEvent(this, this.handleResolveReport)}
-          data-tippy-content={tippyContent}
-          aria-label={tippyContent}
-        >
-          {this.state.loading ? (
-            <Spinner />
-          ) : (
-            <Icon
-              icon="check"
-              classes={`icon-inline ${
-                r.comment_report.resolved ? "text-success" : "text-danger"
-              }`}
+        <div className="row row-cols-auto align-items-center gx-3 my-2">
+          <div className="col">
+            <ActionButton
+              label={tippyContent}
+              inlineWithText
+              icon={r.comment_report.resolved ? "check" : "x"}
+              loading={this.props.loading}
+              onClick={() => handleResolveReport(this)}
+              iconClass={`text-${r.comment_report.resolved ? "success" : "danger"}`}
             />
+          </div>
+          <div className="col">
+            <ActionButton
+              label={I18NextService.i18n.t(
+                comment_view.comment.removed
+                  ? "restore_comment"
+                  : "remove_comment",
+              )}
+              inlineWithText
+              icon={comment_view.comment.removed ? "restore" : "x"}
+              noLoading
+              onClick={() => this.setState({ showRemoveCommentDialog: true })}
+              iconClass={`text-${comment_view.comment.removed ? "success" : "danger"}`}
+            />
+          </div>
+          <div className="col">
+            <ActionButton
+              label={I18NextService.i18n.t(
+                comment_view.creator_banned
+                  ? "unban_from_community"
+                  : "ban_from_community",
+              )}
+              inlineWithText
+              icon={comment_view.creator_banned ? "unban" : "ban"}
+              noLoading
+              onClick={() => handleModBanFromCommunity(this)}
+              iconClass={`text-${comment_view.creator_banned ? "success" : "danger"}`}
+            />
+          </div>
+          {this.props.myUserInfo?.local_user_view.local_user.admin && (
+            <div className="col">
+              <ActionButton
+                label={I18NextService.i18n.t(
+                  comment_view.creator_banned
+                    ? "unban_from_site"
+                    : "ban_from_site",
+                )}
+                inlineWithText
+                icon={comment_view.creator_banned ? "unban" : "ban"}
+                noLoading
+                onClick={() => handleAdminBan(this)}
+                iconClass={`text-${comment_view.creator_banned ? "success" : "danger"}`}
+              />
+            </div>
           )}
-        </button>
-        <ActionButton
-          label={I18NextService.i18n.t(
-            comment_view.comment.removed ? "restore_comment" : "remove_comment",
-          )}
-          inline
-          icon={comment_view.comment.removed ? "restore" : "x"}
-          noLoading
-          onClick={() => this.setState({ showRemoveCommentDialog: true })}
-          iconClass={`text-${comment_view.comment.removed ? "success" : "danger"}`}
-        />
-        <ActionButton
-          label={I18NextService.i18n.t(
-            comment_view.creator_banned
-              ? "unban_from_community"
-              : "ban_from_community",
-          )}
-          inlineWithText
-          icon={comment_view.creator_banned ? "unban" : "ban"}
-          noLoading
-          onClick={this.handleModBanFromCommunity}
-          iconClass={`text-${comment_view.creator_banned ? "success" : "danger"}`}
-        />
-        {this.props.myUserInfo?.local_user_view.local_user.admin && (
-          <ActionButton
-            label={I18NextService.i18n.t(
-              comment_view.creator_banned ? "unban_from_site" : "ban_from_site",
-            )}
-            inlineWithText
-            icon={comment_view.creator_banned ? "unban" : "ban"}
-            noLoading
-            onClick={this.handleAdminBan}
-            iconClass={`text-${comment_view.creator_banned ? "success" : "danger"}`}
-          />
-        )}
+        </div>
         {this.state.showRemoveCommentDialog && (
           <ModActionFormModal
-            onSubmit={this.handleRemoveComment}
+            onSubmit={reason => handleRemoveComment(this, reason)}
             modActionType="remove-comment"
             isRemoved={comment_view.comment.removed}
             onCancel={() => this.setState({ showRemoveCommentDialog: false })}
             show
+            loading={false}
           />
         )}
       </div>
     );
   }
+}
 
-  handleResolveReport(i: CommentReport) {
-    i.setState({ loading: true });
-    i.props.onResolveReport({
-      report_id: i.props.report.comment_report.id,
-      resolved: !i.props.report.comment_report.resolved,
-    });
-  }
+function handleResolveReport(i: CommentReport) {
+  i.props.onResolveReport({
+    report_id: i.props.report.comment_report.id,
+    resolved: !i.props.report.comment_report.resolved,
+  });
+}
 
-  async handleRemoveComment(reason: string) {
-    this.props.onRemoveComment({
-      comment_id: this.props.report.comment.id,
-      removed: !this.props.report.comment.removed,
-      reason,
-    });
-    this.setState({ showRemoveCommentDialog: false });
-  }
+function handleRemoveComment(i: CommentReport, reason: string) {
+  i.props.onRemoveComment({
+    comment_id: i.props.report.comment.id,
+    removed: !i.props.report.comment.removed,
+    reason,
+  });
+  i.setState({ showRemoveCommentDialog: false });
+}
 
-  handleModBanFromCommunity() {
-    this.setState({ loading: true });
-    this.props.onModBanFromCommunity({
-      person: this.props.report.comment_creator,
-      community: this.props.report.community,
-      ban: !this.props.report.creator_banned,
-    });
-  }
+function handleModBanFromCommunity(i: CommentReport) {
+  i.props.onModBanFromCommunity({
+    person: i.props.report.comment_creator,
+    community: i.props.report.community,
+    ban: !i.props.report.creator_banned,
+  });
+}
 
-  handleAdminBan() {
-    this.setState({ loading: true });
-    this.props.onAdminBan({
-      person: this.props.report.comment_creator,
-      ban: !this.props.report.creator_banned,
-    });
-  }
+function handleAdminBan(i: CommentReport) {
+  i.props.onAdminBan({
+    person: i.props.report.comment_creator,
+    ban: !i.props.report.creator_banned,
+  });
 }

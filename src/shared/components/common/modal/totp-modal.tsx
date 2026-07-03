@@ -1,10 +1,10 @@
 import {
   Component,
+  FormEvent,
   InfernoNode,
   MouseEventHandler,
   RefObject,
   createRef,
-  linkEvent,
 } from "inferno";
 import { I18NextService } from "../../../services";
 import { toast } from "@utils/app";
@@ -40,24 +40,23 @@ async function handleSubmit(i: TotpModal, totp: string) {
   }
 }
 
-function handleInput(i: TotpModal, event: any) {
-  if (isNaN(event.target.value)) {
-    return;
-  }
-
+async function handleInput(i: TotpModal, event: FormEvent<HTMLInputElement>) {
   i.setState({
     totp: event.target.value,
   });
 
   const { totp } = i.state;
   if (totp.length >= TOTP_LENGTH) {
-    handleSubmit(i, totp);
+    await handleSubmit(i, totp);
   }
 }
 
-function handlePaste(i: TotpModal, event: any) {
+async function handlePaste(i: TotpModal, event: ClipboardEvent) {
   event.preventDefault();
-  const text: string = event.clipboardData.getData("text")?.trim();
+  const text = event.clipboardData?.getData("text")?.trim();
+  if (!text) {
+    return;
+  }
 
   if (text.length > TOTP_LENGTH || isNaN(Number(text))) {
     toast(I18NextService.i18n.t("invalid_totp_code"), "danger");
@@ -66,7 +65,7 @@ function handlePaste(i: TotpModal, event: any) {
     i.setState({ totp: text });
 
     if (text.length === TOTP_LENGTH) {
-      handleSubmit(i, text);
+      await handleSubmit(i, text);
     }
   }
 }
@@ -84,7 +83,7 @@ export default class TotpModal extends Component<
     pending: false,
   };
 
-  constructor(props: TotpModalProps, context: any) {
+  constructor(props: TotpModalProps, context: object) {
     super(props, context);
 
     this.modalDivRef = createRef();
@@ -128,7 +127,7 @@ export default class TotpModal extends Component<
               {type === "generate" && (
                 <div>
                   <a
-                    className="btn btn-secondary mx-auto d-block totp-link"
+                    className="btn btn-light border-light-subtle mx-auto d-block totp-link"
                     href={secretUrl}
                   >
                     {I18NextService.i18n.t("totp_link")}
@@ -160,8 +159,8 @@ export default class TotpModal extends Component<
                     maxLength={TOTP_LENGTH}
                     id="totp-input"
                     className="form-control form-control-lg mx-2 p-1 p-md-2 text-center"
-                    onInput={linkEvent(this, handleInput)}
-                    onPaste={linkEvent(this, handlePaste)}
+                    onInput={event => handleInput(this, event)}
+                    onPaste={event => handlePaste(this, event)}
                     ref={this.inputRef}
                     enterKeyHint="done"
                     value={totp}
@@ -173,7 +172,7 @@ export default class TotpModal extends Component<
             <footer className="modal-footer">
               <button
                 type="submit"
-                className="btn btn-success"
+                className="btn btn-light border-light-subtle"
                 form="totp-form"
                 disabled={totp.length !== TOTP_LENGTH || pending}
               >
@@ -181,7 +180,7 @@ export default class TotpModal extends Component<
               </button>
               <button
                 type="button"
-                className="btn btn-danger"
+                className="btn btn-light border-light-subtle"
                 onClick={onClose}
               >
                 {I18NextService.i18n.t("cancel")}
@@ -205,7 +204,7 @@ export default class TotpModal extends Component<
 
       this.setState({
         qrCode: URL.createObjectURL(
-          new Blob([(await getSVG(this.props.secretUrl!).buffer) as BlobPart], {
+          new Blob([getSVG(this.props.secretUrl!).buffer as BlobPart], {
             type: "image/svg+xml",
           }),
         ),

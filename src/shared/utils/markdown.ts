@@ -3,9 +3,12 @@ import { debounce, groupBy } from "@utils/helpers";
 import { CommunityTribute, PersonTribute } from "@utils/types";
 import { Picker } from "emoji-mart";
 import { CustomEmojiView } from "lemmy-js-client";
-import { default as MarkdownIt } from "markdown-it";
+import {
+  default as MarkdownIt,
+  Options as MarkdownItOptions,
+  PluginSimple,
+} from "markdown-it";
 import markdown_it_container from "markdown-it-container";
-import { Renderer, Token } from "markdown-it";
 import { relTags } from "./config";
 import { lazyHighlightjs } from "./lazy-highlightjs";
 import { HttpService, WrappedLemmyHttp } from "@services/HttpService";
@@ -13,15 +16,17 @@ import emojiShortName from "emoji-short-name";
 // import markdown_it_emoji from "markdown-it-emoji/bare";
 import markdown_it_bidi from "markdown-it-bidi";
 import markdown_it_footnote from "markdown-it-footnote";
-import markdown_it_html5_embed from "markdown-it-html5-embed";
+import { html5Media } from "markdown-it-html5-media";
 import markdown_it_ruby from "markdown-it-ruby";
 import markdown_it_sub from "markdown-it-sub";
 import markdown_it_sup from "markdown-it-sup";
 import markdown_it_highlightjs from "markdown-it-highlightjs/core";
 import { getStaticDir } from "./env";
 import mila from "markdown-it-link-attributes";
-
-let Tribute: any;
+import { buildPictrsSrc } from "@components/common/pictrs-image";
+import { TributeCollection } from "tributejs";
+import Token from "markdown-it/lib/token.mjs";
+import Renderer from "markdown-it/lib/renderer.mjs";
 
 export let md: MarkdownIt = new MarkdownIt();
 
@@ -59,9 +64,9 @@ const spoilerConfig = {
     return params.trim().match(/^spoiler\s+(.*)$/);
   },
 
-  render: (tokens: any, idx: any) => {
+  render: (tokens: Token[], idx: number) => {
     const m = tokens[idx].info.trim().match(/^spoiler\s+(.*)$/);
-    if (tokens[idx].nesting === 1) {
+    if (tokens[idx].nesting === 1 && m) {
       // opening tag
       const summary = mdToHtmlInline(m[1]).__html;
       return `<details><summary> ${summary} </summary>\n`;
@@ -81,13 +86,8 @@ const highlightjsConfig = {
 };
 
 const html5EmbedConfig = {
-  html5embed: {
-    useImageSyntax: true, // Enables video/audio embed with ![]() syntax (default)
-    attributes: {
-      audio: 'controls preload="metadata"',
-      video: 'width="100%" max-height="100%" controls loop preload="metadata"',
-    },
-  },
+  videoAttrs: 'width="100%" max-height="100%" controls loop preload="metadata"',
+  audioAttrs: 'controls preload="metadata"',
 };
 
 function localInstanceLinkParser(md: MarkdownIt) {
@@ -163,7 +163,7 @@ function localInstanceLinkParser(md: MarkdownIt) {
 }
 
 export function setupMarkdown() {
-  const markdownItConfig: MarkdownIt.Options = {
+  const markdownItConfig: MarkdownItOptions = {
     html: false,
     linkify: true,
     typographer: true,
@@ -175,49 +175,59 @@ export function setupMarkdown() {
   //   {}
   // );
   md = new MarkdownIt(markdownItConfig)
-    .use(markdown_it_sub)
-    .use(markdown_it_sup)
-    .use(markdown_it_footnote)
-    .use(markdown_it_html5_embed, html5EmbedConfig)
+    .use(markdown_it_sub as PluginSimple)
+    .use(markdown_it_sup as PluginSimple)
+    .use(markdown_it_footnote as PluginSimple)
+    .use(html5Media as PluginSimple, html5EmbedConfig)
     .use(markdown_it_container, "spoiler", spoilerConfig)
-    .use(markdown_it_highlightjs, highlightjsConfig)
-    .use(markdown_it_ruby)
+    .use(markdown_it_highlightjs as PluginSimple, highlightjsConfig)
+    .use(markdown_it_ruby as PluginSimple)
     .use(localInstanceLinkParser)
-    .use(markdown_it_bidi)
-    .use(mila, milaAttrs);
+    .use(markdown_it_bidi as PluginSimple)
+    .use(mila as PluginSimple, milaAttrs);
   // .use(markdown_it_emoji, {
   //   defs: emojiDefs,
   // });
 
   mdNoImages = new MarkdownIt(markdownItConfig)
-    .use(markdown_it_sub)
-    .use(markdown_it_sup)
-    .use(markdown_it_footnote)
-    .use(markdown_it_html5_embed, html5EmbedConfig)
+    .use(markdown_it_sub as PluginSimple)
+    .use(markdown_it_sup as PluginSimple)
+    .use(markdown_it_footnote as PluginSimple)
+    .use(html5Media as PluginSimple, html5EmbedConfig)
     .use(markdown_it_container, "spoiler", spoilerConfig)
-    .use(markdown_it_highlightjs, highlightjsConfig)
+    .use(markdown_it_highlightjs as PluginSimple, highlightjsConfig)
     .use(localInstanceLinkParser)
-    .use(markdown_it_bidi)
+    .use(markdown_it_bidi as PluginSimple)
     // .use(markdown_it_emoji, {
     //   defs: emojiDefs,
     // })
-    .use(mila, milaAttrs)
+    .use(mila as PluginSimple, milaAttrs)
     .disable("image");
   const defaultImageRenderer = md.renderer.rules.image;
   md.renderer.rules.image = function (
     tokens: Token[],
     idx: number,
-    options: MarkdownIt.Options,
-    env: any,
+    options: MarkdownItOptions,
+    env: never,
     self: Renderer,
   ) {
-    //Provide custom renderer for our emojis to allow us to add a css class and force size dimensions on them.
-    const item = tokens[idx] as any;
-    const title = item.attrs.length > 2 ? item.attrs[2][1] : "";
-    const splitTitle = title.split(/ (.*)/, 2);
-    const isEmoji = splitTitle[0] === "emoji";
+    // Provide custom renderer for our emojis to allow us to add a css class and force size dimensions on them.
+    const item = tokens[idx];
+
+    // Make any pictrs images a smaller size
+    const src = item.attrGet("src");
+    if (src) {
+      const pictrsSrc = buildPictrsSrc(src, "thumbnail");
+      item.attrSet("src", pictrsSrc);
+    }
+
     const imgElement =
       defaultImageRenderer?.(tokens, idx, options, env, self) ?? "";
+
+    const title = item.attrGet("title");
+    const splitTitle = title?.split(/ (.*)/, 2);
+    const isEmoji = splitTitle?.at(0) === "emoji";
+
     if (imgElement) {
       return isEmoji
         ? `<span class="icon icon-emoji">${imgElement}</span>`
@@ -236,8 +246,8 @@ export function setupMarkdown() {
   md.renderer.rules.link_open = function (
     tokens: Token[],
     idx: number,
-    options: MarkdownIt.Options,
-    env: any,
+    options: MarkdownItOptions,
+    env: never,
     self: Renderer,
   ) {
     tokens[idx].attrPush(["rel", relTags]);
@@ -283,30 +293,32 @@ export async function setupEmojiDataModel(
   return true;
 }
 
-export function getEmojiMart(
-  onEmojiSelect: (e: any) => void,
-  customPickerOptions: any = {},
-) {
+export interface EmojiEvent {
+  native: string;
+  id: string;
+}
+
+export function getEmojiMart(onEmojiSelect: (e: EmojiEvent) => void) {
   const data = async () => {
     const response = await fetch(`${getStaticDir()}/assets/emojis.json`);
 
-    return response.json();
+    return response.json() as object;
   };
   const pickerOptions = {
     onEmojiSelect: onEmojiSelect,
     custom: customEmojis,
     data,
-    ...customPickerOptions,
   };
   return new Picker(pickerOptions);
 }
 
+interface EmojiTribute {
+  key: string;
+  val: string;
+}
+
 export async function setupTribute() {
-  // eslint-disable-next-line eqeqeq
-  if (Tribute == null) {
-    console.debug("Tribute is null, importing...");
-    Tribute = (await import("tributejs")).default;
-  }
+  const Tribute = (await import("tributejs")).default;
 
   return new Tribute({
     noMatchTemplate: function () {
@@ -314,13 +326,14 @@ export async function setupTribute() {
     },
     collection: [
       // Emojis
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
       {
         trigger: ":",
-        menuItemTemplate: (item: any) => {
+        menuItemTemplate: item => {
           const shortName = `:${item.original.key}:`;
           return `${item.original.val} ${shortName}`;
         },
-        selectTemplate: (item: any) => {
+        selectTemplate: item => {
           const customEmoji = customEmojisLookup.get(
             item.original.key,
           )?.custom_emoji;
@@ -328,7 +341,7 @@ export async function setupTribute() {
           else
             return `![${customEmoji.alt_text}](${customEmoji.image_url} "emoji ${customEmoji.shortcode}")`;
         },
-        values: Object.entries(emojiShortName)
+        values: Object.entries(emojiShortName as Record<string, string>)
           .map(e => {
             return { key: e[1], val: e[0] };
           })
@@ -343,40 +356,46 @@ export async function setupTribute() {
         // TODO
         // menuItemLimit: mentionDropdownFetchLimit,
         menuShowMinLength: 2,
-      },
+      } as TributeCollection<EmojiTribute>,
       // Persons
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
       {
         trigger: "@",
-        selectTemplate: (item: any) => {
-          const it: PersonTribute = item.original;
+        selectTemplate: item => {
+          const it = item.original;
           return it.key;
         },
-        values: debounce(async (text: string, cb: any) => {
-          cb(await personSearch(text));
+        values: debounce((text: string, cb) => {
+          personSearch(text)
+            .then(cb)
+            .catch(() => {});
         }),
         allowSpaces: false,
         autocompleteMode: true,
         // TODO
         // menuItemLimit: mentionDropdownFetchLimit,
         menuShowMinLength: 2,
-      },
+      } as TributeCollection<PersonTribute>,
 
       // Communities
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
       {
         trigger: "!",
-        selectTemplate: (item: any) => {
-          const it: CommunityTribute = item.original;
+        selectTemplate: item => {
+          const it = item.original;
           return it.key;
         },
-        values: debounce(async (text: string, cb: any) => {
-          cb(await communitySearch(text));
+        values: debounce((text: string, cb) => {
+          communitySearch(text)
+            .then(cb)
+            .catch(() => {});
         }),
         allowSpaces: false,
         autocompleteMode: true,
         // TODO
         // menuItemLimit: mentionDropdownFetchLimit,
         menuShowMinLength: 2,
-      },
+      } as TributeCollection<CommunityTribute>,
     ],
   });
 }

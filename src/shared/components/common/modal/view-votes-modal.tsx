@@ -1,18 +1,12 @@
-import {
-  Component,
-  InfernoNode,
-  RefObject,
-  createRef,
-  linkEvent,
-} from "inferno";
+import { Component, InfernoNode, RefObject, createRef } from "inferno";
 import { I18NextService } from "../../../services";
 import type { Modal } from "bootstrap";
 import { Icon, Spinner } from "../icon";
 import {
-  ListCommentLikesResponse,
-  ListPostLikesResponse,
+  PagedResponse,
   MyUserInfo,
   VoteView,
+  PaginationCursor,
 } from "lemmy-js-client";
 import {
   EMPTY_REQUEST,
@@ -25,8 +19,6 @@ import { PersonListing } from "../../person/person-listing";
 import { modalMixin } from "../../mixins/modal-mixin";
 import { UserBadges } from "../user-badges";
 import { isBrowser } from "@utils/browser";
-import { DirectionalCursor } from "@utils/types";
-import { cursorComponents } from "@utils/helpers";
 import { PaginatorCursor } from "../paginator-cursor";
 
 interface ViewVotesModalProps {
@@ -39,9 +31,9 @@ interface ViewVotesModalProps {
 }
 
 interface ViewVotesModalState {
-  postLikesRes: RequestState<ListPostLikesResponse>;
-  commentLikesRes: RequestState<ListCommentLikesResponse>;
-  cursor?: DirectionalCursor;
+  postLikesRes: RequestState<PagedResponse<VoteView>>;
+  commentLikesRes: RequestState<PagedResponse<VoteView>>;
+  cursor?: PaginationCursor;
 }
 
 function voteViewTable(votes: VoteView[], myUserInfo: MyUserInfo | undefined) {
@@ -56,6 +48,7 @@ function voteViewTable(votes: VoteView[], myUserInfo: MyUserInfo | undefined) {
                 banned={v.creator_banned || v.creator_banned_from_community}
                 useApubName
                 myUserInfo={myUserInfo}
+                muted={false}
               />
               <UserBadges
                 classNames="ms-1"
@@ -96,14 +89,11 @@ export default class ViewVotesModal extends Component<
     commentLikesRes: EMPTY_REQUEST,
   };
 
-  constructor(props: ViewVotesModalProps, context: any) {
+  constructor(props: ViewVotesModalProps, context: object) {
     super(props, context);
 
     this.modalDivRef = createRef();
     this.yesButtonRef = createRef();
-
-    this.handleDismiss = this.handleDismiss.bind(this);
-    this.handlePageChange = this.handlePageChange.bind(this);
   }
 
   async componentWillMount() {
@@ -148,7 +138,7 @@ export default class ViewVotesModal extends Component<
               <button
                 type="button"
                 className="btn-close"
-                onClick={linkEvent(this, this.handleDismiss)}
+                onClick={() => this.handleDismiss()}
                 aria-label={I18NextService.i18n.t("cancel")}
               ></button>
             </header>
@@ -158,7 +148,7 @@ export default class ViewVotesModal extends Component<
               <PaginatorCursor
                 resource={this.currentRes}
                 current={this.state.cursor}
-                onPageChange={this.handlePageChange}
+                onPageChange={cursor => handlePageChange(this, cursor)}
               />
             </div>
           </div>
@@ -167,7 +157,7 @@ export default class ViewVotesModal extends Component<
     );
   }
 
-  postLikes() {
+  postLikes(): InfernoNode | void {
     switch (this.state.postLikesRes.state) {
       case "loading":
         return (
@@ -176,13 +166,13 @@ export default class ViewVotesModal extends Component<
           </h1>
         );
       case "success": {
-        const likes = this.state.postLikesRes.data.post_likes;
+        const likes = this.state.postLikesRes.data.items;
         return voteViewTable(likes, this.props.myUserInfo);
       }
     }
   }
 
-  commentLikes() {
+  commentLikes(): InfernoNode | void {
     switch (this.state.commentLikesRes.state) {
       case "loading":
         return (
@@ -191,24 +181,15 @@ export default class ViewVotesModal extends Component<
           </h1>
         );
       case "success": {
-        const likes = this.state.commentLikesRes.data.comment_likes;
+        const likes = this.state.commentLikesRes.data.items;
         return voteViewTable(likes, this.props.myUserInfo);
       }
     }
   }
 
-  handleShow() {
-    this.yesButtonRef.current?.focus();
-  }
-
   handleDismiss() {
     this.props.onCancel();
     this.modal?.hide();
-  }
-
-  async handlePageChange(cursor?: DirectionalCursor) {
-    this.setState({ cursor });
-    await this.refetch();
   }
 
   async refetch() {
@@ -220,7 +201,7 @@ export default class ViewVotesModal extends Component<
       this.setState({
         postLikesRes: await HttpService.client.listPostLikes({
           post_id: this.props.id,
-          ...cursorComponents(cursor),
+          page_cursor: cursor,
           limit,
         }),
       });
@@ -229,10 +210,15 @@ export default class ViewVotesModal extends Component<
       this.setState({
         commentLikesRes: await HttpService.client.listCommentLikes({
           comment_id: this.props.id,
-          ...cursorComponents(cursor),
+          page_cursor: cursor,
           limit,
         }),
       });
     }
   }
+}
+
+async function handlePageChange(i: ViewVotesModal, cursor?: PaginationCursor) {
+  i.setState({ cursor });
+  await i.refetch();
 }

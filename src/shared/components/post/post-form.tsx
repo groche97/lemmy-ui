@@ -1,7 +1,7 @@
 import {
   communityToChoice,
   userNotLoggedInOrBanned,
-  fetchCommunities,
+  searchCommunities,
   filterCommunitySelection,
 } from "@utils/app";
 import {
@@ -15,7 +15,13 @@ import {
 import { isImage, isMedia } from "@utils/media";
 import { Choice, StringBoolean } from "@utils/types";
 import autosize from "autosize";
-import { Component, InfernoNode, createRef, linkEvent } from "inferno";
+import {
+  ClipboardEvent,
+  Component,
+  FormEvent,
+  InfernoNode,
+  createRef,
+} from "inferno";
 import { Prompt } from "inferno-router";
 import {
   CommunityView,
@@ -28,8 +34,11 @@ import {
   MyUserInfo,
   PersonView,
   PostView,
-  SearchResponse,
+  CommunityTag,
+  CommunityTagId,
   UploadImageResponse,
+  ModEditPost,
+  PagedResponse,
 } from "lemmy-js-client";
 import {
   archiveTodayUrl,
@@ -50,7 +59,6 @@ import { toast } from "@utils/app";
 import { Icon, Spinner } from "../common/icon";
 import { LanguageSelect } from "../common/language-select";
 import { MarkdownTextArea } from "../common/markdown-textarea";
-import { SearchableSelect } from "../common/searchable-select";
 import { PostListings } from "./post-listings";
 import { isBrowser } from "@utils/browser";
 import { isMagnetLink, extractMagnetLinkDownloadName } from "@utils/media";
@@ -59,6 +67,10 @@ import {
   getUnixTime,
   unixTimeToLocalDateStr,
 } from "@utils/date";
+import { communityTagName } from "@components/community/community-tag";
+import { FilterChipSelect } from "@components/common/filter-chip-select";
+import { PostName } from "./common";
+import { NoOptionI18nKeys } from "i18next";
 
 const MAX_POST_TITLE_LENGTH = 200;
 
@@ -68,27 +80,29 @@ interface PostFormProps {
   allLanguages: Language[];
   siteLanguages: number[];
   params?: PostFormParams;
-  onCancel?(): void;
-  onCreate?(form: CreatePost, bypassNavWarning: () => void): void;
-  onEdit?(form: EditPost, bypassNavWarning: () => void): void;
   enableNsfw: boolean;
   showAdultConsentModal: boolean;
   selectedCommunityChoice?: Choice;
+  selectedCommunityTags?: CommunityTag[];
   isNsfwCommunity: boolean;
-  onSelectCommunity?(choice: Choice): void;
   initialCommunities?: CommunityView[];
   loading: boolean;
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
   admins: PersonView[];
-  onTitleBlur?(title: string): void;
-  onUrlBlur?(url: string): void;
-  onBodyBlur?(body: string): void;
-  onLanguageChange?(languageId?: number): void;
-  onNsfwChange?(nsfw: StringBoolean): void;
-  onThumbnailUrlBlur?(thumbnailUrl: string): void;
-  onAltTextBlur?(altText: string): void;
-  onCopySuggestedTitle?(url: string, title: string): void;
+  onCancel?: () => void;
+  onCreate?: (form: CreatePost, bypassNavWarning: () => void) => void;
+  onEdit?: (form: EditPost, bypassNavWarning: () => void) => void;
+  onModEdit?: (form: ModEditPost, bypassNavWarning: () => void) => void;
+  onSelectCommunity?: (choice: Choice) => void;
+  onTitleBlur?: (title: string) => void;
+  onUrlBlur?: (url: string) => void;
+  onBodyBlur?: (body: string) => void;
+  onLanguageChange?: (languageId?: number) => void;
+  onNsfwChange?: (nsfw: StringBoolean) => void;
+  onThumbnailUrlBlur?: (thumbnailUrl: string) => void;
+  onAltTextBlur?: (altText: string) => void;
+  onCopySuggestedTitle?: (url: string, title: string) => void;
 }
 
 interface PostFormState {
@@ -102,222 +116,21 @@ interface PostFormState {
     honeypot?: string;
     custom_thumbnail?: string;
     alt_text?: string;
+    tags?: CommunityTagId[];
     // Javascript treats this field as a string, that can't have timezone info.
     scheduled_publish_time_at?: string;
   };
-  suggestedPostsRes: RequestState<SearchResponse>;
+  suggestedPostsRes: RequestState<PagedResponse<PostView>>;
   metadataRes: RequestState<GetSiteMetadataResponse>;
   imageLoading: boolean;
   uploadedImage?: UploadImageResponse;
   communitySearchLoading: boolean;
   communitySearchOptions: Choice[];
   previewMode: boolean;
-  submitted: boolean;
   bypassNavWarning: boolean;
 }
 
-function handlePostSubmit(i: PostForm, event: any) {
-  event.preventDefault();
-  // Coerce empty url string to undefined
-  if ((i.state.form.url ?? "") === "") {
-    i.setState(s => ((s.form.url = undefined), s));
-  }
-  // This forces `props.loading` to become true, then false, to enable the
-  // submit button again.
-  i.setState({ submitted: true });
-
-  const pForm = i.state.form;
-  const pv = i.props.post_view;
-  const scheduled_publish_time_at = getUnixTimeLemmy(
-    pForm.scheduled_publish_time_at,
-  );
-
-  if (pv) {
-    i.props.onEdit?.(
-      {
-        post_id: pv.post.id,
-        name: pForm.name,
-        url: pForm.url,
-        body: pForm.body,
-        nsfw: pForm.nsfw,
-        language_id: pForm.language_id,
-        custom_thumbnail: pForm.custom_thumbnail,
-        alt_text: pForm.alt_text,
-        scheduled_publish_time_at,
-      },
-      () => {
-        i.setState({ bypassNavWarning: true });
-      },
-    );
-  } else if (pForm.name && pForm.community_id) {
-    i.props.onCreate?.(
-      {
-        name: pForm.name,
-        community_id: pForm.community_id,
-        url: pForm.url,
-        body: pForm.body,
-        nsfw: pForm.nsfw,
-        language_id: pForm.language_id,
-        honeypot: pForm.honeypot,
-        custom_thumbnail: pForm.custom_thumbnail,
-        alt_text: pForm.alt_text,
-        scheduled_publish_time_at,
-      },
-      () => {
-        i.setState({ bypassNavWarning: true });
-      },
-    );
-  }
-}
-
-function copySuggestedTitle({
-  i,
-  suggestedTitle,
-}: {
-  i: PostForm;
-  suggestedTitle?: string;
-}) {
-  if (suggestedTitle) {
-    i.setState(
-      s => (
-        (s.form.name = suggestedTitle?.substring(0, MAX_POST_TITLE_LENGTH)),
-        s
-      ),
-    );
-    i.fetchSimilarPosts();
-    i.setState({ suggestedPostsRes: EMPTY_REQUEST });
-    setTimeout(() => {
-      if (i.postTitleRef.current) {
-        autosize.update(i.postTitleRef.current);
-      }
-    }, 10);
-
-    i.updateUrl(() =>
-      i.props.onCopySuggestedTitle?.(i.state.form.url!, suggestedTitle),
-    );
-  }
-}
-
-function handlePostUrlChange(i: PostForm, event: any) {
-  const url = event.target.value;
-
-  i.setState(prev => ({
-    ...prev,
-    form: {
-      ...prev.form,
-      url,
-    },
-    uploadedImage: undefined,
-  }));
-
-  i.fetchPageTitle();
-}
-
-function handlePostUrlBlur(i: PostForm, event: any) {
-  i.updateUrl(() => i.props.onUrlBlur?.(event.target.value));
-}
-
-function handlePostNsfwChange(i: PostForm, event: any) {
-  i.setState(s => ((s.form.nsfw = event.target.checked), s));
-
-  i.updateUrl(() =>
-    i.props.onNsfwChange?.(event.target.checked ? "true" : "false"),
-  );
-}
-
-function handlePostScheduleChange(i: PostForm, event: any) {
-  const scheduled_publish_time = event.target.value;
-
-  i.setState(
-    s => ((s.form.scheduled_publish_time_at = scheduled_publish_time), s),
-  );
-}
-
-function handleHoneyPotChange(i: PostForm, event: any) {
-  i.setState(s => ((s.form.honeypot = event.target.value), s));
-}
-
-function handleAltTextChange(i: PostForm, event: any) {
-  i.setState(s => ((s.form.alt_text = event.target.value), s));
-}
-
-function handleAltTextBlur(i: PostForm, event: any) {
-  i.updateUrl(() => i.props.onAltTextBlur?.(event.target.value));
-}
-
-function handleCustomThumbnailChange(i: PostForm, event: any) {
-  i.setState(s => ((s.form.custom_thumbnail = event.target.value), s));
-}
-
-function handleCustomThumbnailBlur(i: PostForm, event: any) {
-  i.updateUrl(() => i.props.onThumbnailUrlBlur?.(event.target.value));
-}
-
-function handleCancel(i: PostForm) {
-  i.props.onCancel?.();
-}
-
-function handleImageUploadPaste(i: PostForm, event: any) {
-  const image = event.clipboardData.files[0];
-  if (image) {
-    handleImageUpload(i, image);
-  }
-}
-
-function handleImageUpload(i: PostForm, event: any) {
-  let file: any;
-  if (event.target) {
-    event.preventDefault();
-    file = event.target.files[0];
-  } else {
-    file = event;
-  }
-
-  i.setState({ imageLoading: true });
-
-  HttpService.client.uploadImage({ image: file }).then(res => {
-    if (res.state === "success") {
-      i.state.form.url = res.data.image_url;
-      i.setState({
-        imageLoading: false,
-        uploadedImage: res.data,
-      });
-    } else if (res.state === "failed") {
-      console.error(res.err.name);
-      toast(res.err.name, "danger");
-      i.setState({ imageLoading: false });
-    }
-  });
-}
-
-function handlePostNameChange(i: PostForm, event: any) {
-  i.setState(s => ((s.form.name = event.target.value), s));
-  i.fetchSimilarPosts();
-}
-
-function handlePostNameBlur(i: PostForm, event: any) {
-  i.updateUrl(() => i.props.onTitleBlur?.(event.target.value));
-}
-
-function handleImageDelete(i: PostForm) {
-  const { uploadedImage } = i.state;
-
-  if (uploadedImage) {
-    HttpService.client.deleteMedia({
-      filename: uploadedImage.filename,
-    });
-  }
-
-  i.setState(prev => ({
-    ...prev,
-    uploadedImage: undefined,
-    imageLoading: false,
-    form: {
-      ...prev.form,
-      url: "",
-    },
-  }));
-}
+type EditorType = "creator" | "mod_or_admin" | "none";
 
 export class PostForm extends Component<PostFormProps, PostFormState> {
   state: PostFormState = {
@@ -329,21 +142,13 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
     communitySearchLoading: false,
     previewMode: false,
     communitySearchOptions: [],
-    submitted: false,
     bypassNavWarning: false,
   };
 
   postTitleRef = createRef<HTMLTextAreaElement>();
 
-  constructor(props: PostFormProps, context: any) {
+  constructor(props: PostFormProps, context: object) {
     super(props, context);
-    this.fetchSimilarPosts = debounce(this.fetchSimilarPosts.bind(this));
-    this.fetchPageTitle = debounce(this.fetchPageTitle.bind(this));
-    this.handlePostBodyChange = this.handlePostBodyChange.bind(this);
-    this.handlePostBodyBlur = this.handlePostBodyBlur.bind(this);
-    this.handleLanguageChange = this.handleLanguageChange.bind(this);
-    this.handleCommunitySelect = this.handleCommunitySelect.bind(this);
-    this.updateUrl = this.updateUrl.bind(this);
 
     const { post_view, selectedCommunityChoice, params } = this.props;
     // Means its an edit
@@ -361,6 +166,7 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
           language_id: post_view.post.language_id,
           custom_thumbnail: post_view.post.thumbnail_url,
           alt_text: post_view.post.alt_text,
+          tags: post_view.tags.map(t => t.id),
           scheduled_publish_time_at,
         },
       };
@@ -396,9 +202,9 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
     }
   }
 
-  componentWillMount() {
+  async componentWillMount() {
     if (this.state.form.url && isBrowser()) {
-      this.fetchPageTitle();
+      await fetchPageTitle(this);
     }
   }
 
@@ -410,7 +216,7 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
 
   componentWillReceiveProps(
     nextProps: Readonly<{ children?: InfernoNode } & PostFormProps>,
-  ): void {
+  ) {
     if (
       this.props.selectedCommunityChoice?.value !==
         nextProps.selectedCommunityChoice?.value &&
@@ -442,16 +248,35 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
       });
     }
     if (this.props.loading && !nextProps.loading) {
-      this.setState({ submitted: false, bypassNavWarning: false });
+      this.setState({ bypassNavWarning: false });
     }
     if (this.props.params !== nextProps.params && nextProps.params) {
       const params = nextProps.params;
       for (const k in params) {
         if (this.props.params?.[k] !== params[k]) {
-          this.setState(s => ({ form: { ...s.form, [k]: params[k] } }));
+          this.setState(s => ({
+            form: { ...s.form, [k]: params[k] as unknown },
+          }));
         }
       }
     }
+  }
+
+  get editorType(): EditorType {
+    const p = this.props;
+    let type_: EditorType;
+
+    if (
+      !p.post_view ||
+      p.post_view?.creator.id === p.myUserInfo?.local_user_view.person.id
+    ) {
+      type_ = "creator";
+    } else if (p.post_view?.can_mod) {
+      type_ = "mod_or_admin";
+    } else {
+      type_ = "none";
+    }
+    return type_;
   }
 
   render() {
@@ -459,9 +284,10 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
     const selectedLangs = firstLang ? Array.of(firstLang) : undefined;
 
     const url = this.state.form.url;
+    const imageUploadDisabled = this.props.localSite.image_upload_disabled;
 
     return (
-      <form className="post-form" onSubmit={linkEvent(this, handlePostSubmit)}>
+      <form className="post-form" onSubmit={e => handlePostSubmit(this, e)}>
         <Prompt
           message={I18NextService.i18n.t("block_leaving")}
           when={
@@ -472,244 +298,273 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
             ) && !this.state.bypassNavWarning
           }
         />
-        <div className="mb-3 row">
-          <label className="col-sm-2 col-form-label" htmlFor="post-title">
-            {I18NextService.i18n.t("title")}
-          </label>
-          <div className="col-sm-10">
-            <textarea
-              value={this.state.form.name}
-              id="post-title"
-              onInput={linkEvent(this, handlePostNameChange)}
-              onBlur={linkEvent(this, handlePostNameBlur)}
-              className={`form-control ${
-                !validTitle(this.state.form.name) && "is-invalid"
-              }`}
-              required
-              rows={1}
-              minLength={3}
-              maxLength={MAX_POST_TITLE_LENGTH}
-              ref={this.postTitleRef}
-            />
-            {!validTitle(this.state.form.name) && (
-              <div className="invalid-feedback">
-                {I18NextService.i18n.t("invalid_post_title")}
-              </div>
-            )}
-            {this.renderSuggestedPosts()}
-          </div>
-        </div>
-
-        <div className="mb-3 row">
-          <label className="col-sm-2 col-form-label" htmlFor="post-url">
-            {I18NextService.i18n.t("url")}
-          </label>
-          <div className="col-sm-10">
-            <input
-              type="url"
-              placeholder={I18NextService.i18n.t("optional")}
-              id="post-url"
-              className="form-control mb-3"
-              value={url}
-              onInput={linkEvent(this, handlePostUrlChange)}
-              onBlur={linkEvent(this, handlePostUrlBlur)}
-              onPaste={linkEvent(this, handleImageUploadPaste)}
-            />
-            {this.renderSuggestedTitleCopy()}
-            {url && validURL(url) && (
-              <div>
-                <a
-                  href={`${webArchiveUrl}/save/${encodeURIComponent(url)}`}
-                  className="me-2 d-inline-block float-right text-muted small fw-bold"
-                  rel={relTags}
-                >
-                  archive.org {I18NextService.i18n.t("archive_link")}
-                </a>
-                <a
-                  href={`${ghostArchiveUrl}/search${getQueryString({ term: url })}`}
-                  className="me-2 d-inline-block float-right text-muted small fw-bold"
-                  rel={relTags}
-                >
-                  ghostarchive.org {I18NextService.i18n.t("archive_link")}
-                </a>
-                <a
-                  href={`${archiveTodayUrl}/${getQueryString({ run: "1", url })}`}
-                  className="me-2 d-inline-block float-right text-muted small fw-bold"
-                  rel={relTags}
-                >
-                  archive.today {I18NextService.i18n.t("archive_link")}
-                </a>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="mb-3 row">
-          <label htmlFor="file-upload" className={"col-sm-2 col-form-label"}>
-            {capitalizeFirstLetter(I18NextService.i18n.t("image"))}
-            <Icon icon="image" classes="icon-inline ms-1" />
-          </label>
-          <div className="col-sm-10">
-            <input
-              id="file-upload"
-              type="file"
-              accept="image/*,video/*"
-              name="file"
-              className="small col-sm-10 form-control"
-              disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
-              onChange={linkEvent(this, handleImageUpload)}
-            />
-            {this.state.imageLoading && <Spinner />}
-            {url && isImage(url) && (
-              <img src={url} className="img-fluid mt-2" alt="" />
-            )}
-            {this.state.uploadedImage && (
-              <button
-                className="btn btn-danger btn-sm mt-2"
-                onClick={linkEvent(this, handleImageDelete)}
-              >
-                <Icon icon="x" classes="icon-inline me-1" />
-                {capitalizeFirstLetter(I18NextService.i18n.t("delete"))}
-              </button>
-            )}
-          </div>
-
-          {this.props.crossPosts && this.props.crossPosts.length > 0 && (
-            <>
-              <div className="my-1 text-muted small fw-bold">
-                {I18NextService.i18n.t("cross_posts")}
-              </div>
-              <PostListings
-                showCommunity
-                viewOnly
-                markable={false}
-                posts={this.props.crossPosts}
-                showCrossPosts="show_separately"
-                enableNsfw={this.props.enableNsfw}
-                showAdultConsentModal={this.props.showAdultConsentModal}
-                allLanguages={this.props.allLanguages}
-                siteLanguages={this.props.siteLanguages}
-                myUserInfo={this.props.myUserInfo}
-                localSite={this.props.localSite}
-                admins={this.props.admins}
-                postListingMode="list"
-                // All of these are unused, since its view only
-                onPostEdit={() => EMPTY_REQUEST}
-                onPostVote={() => EMPTY_REQUEST}
-                onPostReport={() => {}}
-                onBlockPerson={() => {}}
-                onBlockCommunity={() => {}}
-                onLockPost={() => {}}
-                onDeletePost={() => {}}
-                onRemovePost={() => {}}
-                onSavePost={() => {}}
-                onFeaturePost={() => {}}
-                onPurgePerson={() => {}}
-                onPurgePost={() => {}}
-                onBanPersonFromCommunity={() => {}}
-                onBanPerson={() => {}}
-                onAddModToCommunity={() => {}}
-                onAddAdmin={() => {}}
-                onTransferCommunity={() => {}}
-                onMarkPostAsRead={() => {}}
-                onHidePost={() => {}}
-                onPersonNote={() => {}}
-                onScrollIntoCommentsClick={() => {}}
-              />
-            </>
-          )}
-        </div>
-
-        {!isImage(url || "") && (
-          <div className="mb-3 row">
-            <label
-              className="col-sm-2 col-form-label"
-              htmlFor="post-custom-thumbnail"
-            >
-              {I18NextService.i18n.t("custom_thumbnail_url")}
-            </label>
-            <div className="col-sm-10">
-              <input
-                type="url"
-                id="post-custom-thumbnail"
-                placeholder={I18NextService.i18n.t("optional")}
-                className="form-control mb-3"
-                value={this.state.form.custom_thumbnail}
-                onInput={linkEvent(this, handleCustomThumbnailChange)}
-                onBlur={linkEvent(this, handleCustomThumbnailBlur)}
-              />
-            </div>
+        {/* Show an un-editable title for mod edits */}
+        {this.editorType === "mod_or_admin" && this.props.post_view && (
+          <div className="mb-3">
+            <PostName post={this.props.post_view.post} showBody={"preview"} />
           </div>
         )}
+        {this.editorType === "creator" && (
+          <>
+            <div className="mb-3 row">
+              <label className="col-sm-2 col-form-label" htmlFor="post-title">
+                {I18NextService.i18n.t("title")}
+              </label>
+              <div className="col-sm-10">
+                <textarea
+                  value={this.state.form.name}
+                  id="post-title"
+                  onInput={e => handlePostNameChange(this, e)}
+                  className={`form-control ${
+                    !validTitle(this.state.form.name) && "is-invalid"
+                  }`}
+                  required
+                  rows={1}
+                  minLength={3}
+                  maxLength={MAX_POST_TITLE_LENGTH}
+                  ref={this.postTitleRef}
+                />
+                {!validTitle(this.state.form.name) && (
+                  <div className="invalid-feedback">
+                    {I18NextService.i18n.t("invalid_post_title")}
+                  </div>
+                )}
+                {this.renderSuggestedPosts()}
+              </div>
+            </div>
+            <div className="mb-3 row">
+              <label className="col-sm-2 col-form-label" htmlFor="post-url">
+                {I18NextService.i18n.t("url")}
+              </label>
+              <div className="col-sm-10">
+                <input
+                  type="url"
+                  placeholder={I18NextService.i18n.t("optional")}
+                  id="post-url"
+                  className="form-control mb-3"
+                  value={url}
+                  onInput={e => handlePostUrlChange(this, e)}
+                  onPaste={e => handleImageUploadPaste(this, e)}
+                />
+                {this.renderSuggestedTitleCopy()}
+                {/* Show a warning for media posts with missing alt text */}
+                {url && isMedia(url) && !this.state.form.alt_text && (
+                  <div className="alert alert-warning" role="alert">
+                    {I18NextService.i18n.t("missing_alt_text")}
+                  </div>
+                )}
+                {url && validURL(url) && (
+                  <div>
+                    <a
+                      href={`${webArchiveUrl}/save/${encodeURIComponent(url)}`}
+                      className="me-2 d-inline-block float-right text-muted small fw-bold"
+                      rel={relTags}
+                    >
+                      archive.org {I18NextService.i18n.t("archive_link")}
+                    </a>
+                    <a
+                      href={`${ghostArchiveUrl}/search${getQueryString({ term: url })}`}
+                      className="me-2 d-inline-block float-right text-muted small fw-bold"
+                      rel={relTags}
+                    >
+                      ghostarchive.org {I18NextService.i18n.t("archive_link")}
+                    </a>
+                    <a
+                      href={`${archiveTodayUrl}/${getQueryString({ run: "1", url })}`}
+                      className="me-2 d-inline-block float-right text-muted small fw-bold"
+                      rel={relTags}
+                    >
+                      archive.today {I18NextService.i18n.t("archive_link")}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mb-3 row">
+              {!this.props.localSite.image_upload_disabled && (
+                <>
+                  <label
+                    htmlFor="file-upload"
+                    className={"col-sm-2 col-form-label"}
+                  >
+                    {capitalizeFirstLetter(I18NextService.i18n.t("image"))}
+                    <Icon icon="image" classes="icon-inline ms-1" />
+                  </label>
+                  <div className="col-sm-10">
+                    <input
+                      id="file-upload"
+                      type="file"
+                      accept="image/*,video/*"
+                      name="file"
+                      className="small col-sm-10 form-control"
+                      disabled={userNotLoggedInOrBanned(this.props.myUserInfo)}
+                      onChange={e => handleImageUpload(this, e)}
+                    />
+                    {this.state.imageLoading && <Spinner />}
+                    {url && isImage(url) && (
+                      <img src={url} className="img-fluid mt-2" alt="" />
+                    )}
+                    {this.state.uploadedImage && (
+                      <button
+                        className="btn btn-danger btn-sm mt-2"
+                        onClick={() => handleImageDelete(this)}
+                      >
+                        <Icon icon="x" classes="icon-inline me-1" />
+                        {capitalizeFirstLetter(I18NextService.i18n.t("delete"))}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
 
-        <div className="mb-3 row">
-          <label className="col-sm-2 col-form-label">
-            {I18NextService.i18n.t("body")}
-          </label>
-          <div className="col-sm-10">
-            <MarkdownTextArea
-              initialContent={this.state.form.body}
-              placeholder={I18NextService.i18n.t("optional")}
-              onContentChange={this.handlePostBodyChange}
-              onContentBlur={this.handlePostBodyBlur}
+              {this.props.crossPosts && this.props.crossPosts.length > 0 && (
+                <>
+                  <div className="my-1 text-muted small fw-bold">
+                    {I18NextService.i18n.t("cross_posts")}
+                  </div>
+                  <PostListings
+                    showCommunity
+                    multiCommunity={false}
+                    viewOnly
+                    showMarkRead="hide"
+                    posts={this.props.crossPosts}
+                    showCrossPosts="show_separately"
+                    enableNsfw={this.props.enableNsfw}
+                    showAdultConsentModal={this.props.showAdultConsentModal}
+                    allLanguages={this.props.allLanguages}
+                    siteLanguages={this.props.siteLanguages}
+                    myUserInfo={this.props.myUserInfo}
+                    localSite={this.props.localSite}
+                    admins={this.props.admins}
+                    postListingMode="list"
+                    voteLoading={undefined}
+                    muteCommunityName={false}
+                    mutePersonName
+                    hideAvatar
+                    // All of these are unused, since its view only
+                    onPostEdit={() => {}}
+                    onPostModEdit={() => {}}
+                    onPostVote={() => {}}
+                    onPostReport={() => {}}
+                    onBlockPerson={() => {}}
+                    onBlockCommunity={() => {}}
+                    onLockPost={() => {}}
+                    onWarnPost={() => {}}
+                    onDeletePost={() => {}}
+                    onRemovePost={() => {}}
+                    onSavePost={() => {}}
+                    onFeaturePost={() => {}}
+                    onPurgePerson={() => {}}
+                    onPurgePost={() => {}}
+                    onBanPersonFromCommunity={() => {}}
+                    onBanPerson={() => {}}
+                    onAddModToCommunity={() => {}}
+                    onAddAdmin={() => {}}
+                    onTransferCommunity={() => {}}
+                    onMarkPostAsRead={() => {}}
+                    onHidePost={() => {}}
+                    onPersonNote={() => {}}
+                    onScrollIntoCommentsClick={() => {}}
+                  />
+                </>
+              )}
+            </div>
+            {url && isMedia(url) && (
+              <div className="mb-3 row">
+                <label
+                  className="col-sm-2 col-form-label"
+                  htmlFor="post-alt-text"
+                >
+                  {I18NextService.i18n.t("column_alttext")}
+                </label>
+                <div className="col-sm-10">
+                  <input
+                    autoComplete="false"
+                    name="alt_text"
+                    placeholder={I18NextService.i18n.t("optional")}
+                    type="text"
+                    className="form-control mb-3"
+                    id="post-alt-text"
+                    value={this.state.form.alt_text}
+                    onInput={e => handleAltTextChange(this, e)}
+                  />
+                </div>
+              </div>
+            )}
+            {!isImage(url || "") && (
+              <div className="mb-3 row">
+                <label
+                  className="col-sm-2 col-form-label"
+                  htmlFor="post-custom-thumbnail"
+                >
+                  {I18NextService.i18n.t("custom_thumbnail_url")}
+                </label>
+                <div className="col-sm-10">
+                  <input
+                    type="url"
+                    id="post-custom-thumbnail"
+                    placeholder={I18NextService.i18n.t("optional")}
+                    className="form-control mb-3"
+                    value={this.state.form.custom_thumbnail}
+                    onInput={e => handleCustomThumbnailChange(this, e)}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="mb-3 row">
+              <label className="col-sm-2 col-form-label">
+                {I18NextService.i18n.t("body")}
+              </label>
+              <div className="col-sm-10">
+                <MarkdownTextArea
+                  initialContent={this.state.form.body}
+                  placeholder={I18NextService.i18n.t("optional")}
+                  onContentChange={val => handlePostBodyChange(this, val)}
+                  onContentBlur={val => handlePostBodyBlur(this, val)}
+                  allLanguages={this.props.allLanguages}
+                  siteLanguages={this.props.siteLanguages}
+                  hideNavigationWarnings
+                  maxLength={postMarkdownFieldCharacterLimit}
+                  myUserInfo={this.props.myUserInfo}
+                  imageUploadDisabled={imageUploadDisabled}
+                />
+              </div>
+            </div>
+            <LanguageSelect
               allLanguages={this.props.allLanguages}
               siteLanguages={this.props.siteLanguages}
-              hideNavigationWarnings
-              maxLength={postMarkdownFieldCharacterLimit}
+              selectedLanguageIds={selectedLangs}
+              multiple={false}
+              onChange={val => handleLanguageChange(this, val)}
               myUserInfo={this.props.myUserInfo}
             />
-          </div>
-        </div>
-        <LanguageSelect
-          allLanguages={this.props.allLanguages}
-          siteLanguages={this.props.siteLanguages}
-          selectedLanguageIds={selectedLangs}
-          multiple={false}
-          onChange={this.handleLanguageChange}
-          myUserInfo={this.props.myUserInfo}
-        />
-        {url && isMedia(url) && (
-          <div className="mb-3 row">
-            <label className="col-sm-2 col-form-label" htmlFor="post-alt-text">
-              {I18NextService.i18n.t("column_alttext")}
-            </label>
-            <div className="col-sm-10">
-              <input
-                autoComplete="false"
-                name="alt_text"
-                placeholder={I18NextService.i18n.t("optional")}
-                type="text"
-                className="form-control"
-                id="post-alt-text"
-                value={this.state.form.alt_text}
-                onInput={linkEvent(this, handleAltTextChange)}
-                onBlur={linkEvent(this, handleAltTextBlur)}
-              />
-            </div>
-          </div>
-        )}
-        {!this.props.post_view && (
-          <div className="mb-3 row">
-            <label className="col-sm-2 col-form-label" htmlFor="post-community">
-              {I18NextService.i18n.t("community")}
-            </label>
-            <div className="col-sm-10">
-              <SearchableSelect
-                id="post-community"
-                value={this.state.form.community_id}
-                options={[
-                  {
-                    label: I18NextService.i18n.t("select_a_community"),
-                    value: "",
-                    disabled: true,
-                  } as Choice,
-                ].concat(this.state.communitySearchOptions)}
-                loading={this.state.communitySearchLoading}
-                onChange={this.handleCommunitySelect}
-                onSearch={this.handleCommunitySearch}
-              />
-            </div>
-          </div>
+            {!this.props.post_view && (
+              <div className="mb-3 row align-items-center">
+                <label
+                  className="col-sm-2 col-form-label"
+                  htmlFor="post-community"
+                >
+                  {I18NextService.i18n.t("community")}
+                </label>
+                <div className="col-sm-10">
+                  <FilterChipSelect
+                    label={"select_a_community"}
+                    multiple={false}
+                    allOptions={this.state.communitySearchOptions}
+                    selectedOptions={
+                      this.state.form.community_id
+                        ? [this.state.form.community_id.toString()]
+                        : []
+                    }
+                    onSearch={text => handleCommunitySearch(this, text)}
+                    onSelect={choices =>
+                      handleCommunitySelect(this, choices[0])
+                    }
+                  />
+                </div>
+              </div>
+            )}
+          </>
         )}
         {this.props.enableNsfw && !this.props.isNsfwCommunity && (
           <div className="form-check mb-3">
@@ -718,15 +573,14 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
               id="post-nsfw"
               type="checkbox"
               checked={this.state.form.nsfw}
-              onChange={linkEvent(this, handlePostNsfwChange)}
+              onChange={e => handlePostNsfwChange(this, e)}
             />
             <label className="form-check-label" htmlFor="post-nsfw">
               {I18NextService.i18n.t("nsfw")}
             </label>
           </div>
         )}
-
-        {!this.props.post_view && (
+        {this.editorType === "creator" && !this.props.post_view && (
           <div className="mb-3 row">
             <label className="col-sm-2 col-form-label" htmlFor="post-schedule">
               {I18NextService.i18n.t("scheduled_publish_time")}
@@ -738,12 +592,37 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
                 min={unixTimeToLocalDateStr(Date.now())}
                 id="post-schedule"
                 className="form-control mb-3"
-                onInput={linkEvent(this, handlePostScheduleChange)}
+                onInput={e => handlePostScheduleChange(this, e)}
               />
             </div>
           </div>
         )}
-
+        {this.props.selectedCommunityTags &&
+          this.props.selectedCommunityTags.length > 0 && (
+            <div className="mb-3 row">
+              <label className="col-sm-2 col-form-label" htmlFor="post-tags">
+                {I18NextService.i18n.t("tags")}
+              </label>
+              <div className="col-sm-10">
+                <FilterChipSelect
+                  label={"tags"}
+                  multiple
+                  allOptions={this.props.selectedCommunityTags
+                    .filter(t => !t.deleted)
+                    .map(tag => {
+                      return {
+                        value: tag.id.toString(),
+                        label: communityTagName(tag),
+                      };
+                    })}
+                  selectedOptions={(this.state.form.tags ?? []).map(t =>
+                    t.toString(),
+                  )}
+                  onSelect={choices => handleTagsChange(this, choices)}
+                />
+              </div>
+            </div>
+          )}
         <input
           tabIndex={-1}
           autoComplete="false"
@@ -752,18 +631,14 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
           className="form-control honeypot"
           id="register-honey"
           value={this.state.form.honeypot}
-          onInput={linkEvent(this, handleHoneyPotChange)}
+          onInput={e => handleHoneyPotChange(this, e)}
         />
         <div className="mb-3 row">
           <div className="col-sm-10">
             <button
-              disabled={
-                !this.state.form.community_id ||
-                this.props.loading ||
-                this.state.submitted
-              }
+              disabled={!this.state.form.community_id || this.props.loading}
               type="submit"
-              className="btn btn-secondary me-2"
+              className="btn btn-light border-light-subtle me-2"
             >
               {this.props.loading ? (
                 <Spinner />
@@ -776,8 +651,8 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
             {this.props.post_view && (
               <button
                 type="button"
-                className="btn btn-secondary"
-                onClick={linkEvent(this, handleCancel)}
+                className="btn btn-light border-light-subtle"
+                onClick={() => handleCancel(this)}
               >
                 {I18NextService.i18n.t("cancel")}
               </button>
@@ -788,7 +663,7 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
     );
   }
 
-  renderSuggestedTitleCopy() {
+  renderSuggestedTitleCopy(): InfernoNode | void {
     switch (this.state.metadataRes.state) {
       case "loading":
         return <Spinner />;
@@ -802,10 +677,7 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
             <button
               type="button"
               className="mt-1 small border-0 bg-transparent p-0 d-block text-muted fw-bold pointer"
-              onClick={linkEvent(
-                { i: this, suggestedTitle },
-                copySuggestedTitle,
-              )}
+              onClick={() => handleCopySuggestedTitle(this, suggestedTitle)}
             >
               {I18NextService.i18n.t("copy_suggested_title", { title: "" })}{" "}
               {suggestedTitle}
@@ -816,14 +688,12 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
     }
   }
 
-  renderSuggestedPosts() {
+  renderSuggestedPosts(): InfernoNode | void {
     switch (this.state.suggestedPostsRes.state) {
       case "loading":
         return <Spinner />;
       case "success": {
-        const suggestedPosts = this.state.suggestedPostsRes.data.results.filter(
-          r => r.type_ === "post",
-        );
+        const suggestedPosts = this.state.suggestedPostsRes.data.items;
 
         return (
           suggestedPosts &&
@@ -834,8 +704,9 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
               </div>
               <PostListings
                 showCommunity
+                multiCommunity={false}
                 viewOnly
-                markable={false}
+                showMarkRead="hide"
                 posts={suggestedPosts}
                 showCrossPosts="show_separately"
                 enableNsfw={this.props.enableNsfw}
@@ -846,13 +717,19 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
                 localSite={this.props.localSite}
                 admins={this.props.admins}
                 postListingMode="list"
+                voteLoading={undefined}
+                muteCommunityName={false}
+                mutePersonName
+                hideAvatar
                 // All of these are unused, since its view only
-                onPostEdit={() => EMPTY_REQUEST}
-                onPostVote={() => EMPTY_REQUEST}
+                onPostEdit={() => {}}
+                onPostModEdit={() => {}}
+                onPostVote={() => {}}
                 onPostReport={() => {}}
                 onBlockPerson={() => {}}
                 onBlockCommunity={() => {}}
                 onLockPost={() => {}}
+                onWarnPost={() => {}}
                 onDeletePost={() => {}}
                 onRemovePost={() => {}}
                 onSavePost={() => {}}
@@ -875,96 +752,312 @@ export class PostForm extends Component<PostFormProps, PostFormState> {
       }
     }
   }
+}
 
-  async fetchPageTitle() {
-    const url = this.state.form.url;
-    if (url && validURL(url)) {
-      // If its a magnet link, fill in the download name
-      if (isMagnetLink(url)) {
-        const title = extractMagnetLinkDownloadName(url);
-        if (title) {
-          this.setState({
-            metadataRes: {
-              state: "success",
-              data: {
-                metadata: { title },
-              },
+const fetchPageTitle = debounce(async (i: PostForm) => {
+  const url = i.state.form.url;
+  if (url && validURL(url)) {
+    // If its a magnet link, fill in the download name
+    if (isMagnetLink(url)) {
+      const title = extractMagnetLinkDownloadName(url);
+      if (title) {
+        i.setState({
+          metadataRes: {
+            state: "success",
+            data: {
+              metadata: { title },
             },
-          });
-        }
-      } else {
-        this.setState({ metadataRes: LOADING_REQUEST });
-        this.setState({
-          metadataRes: await HttpService.client.getSiteMetadata({ url }),
+          },
         });
       }
-    }
-  }
-
-  async fetchSimilarPosts() {
-    const q = this.state.form.name;
-    if (q && q !== "") {
-      this.setState({ suggestedPostsRes: LOADING_REQUEST });
-      this.setState({
-        suggestedPostsRes: await HttpService.client.search({
-          q,
-          type_: "posts",
-          sort: "top",
-          listing_type: "all",
-          community_id: this.state.form.community_id,
-        }),
+    } else {
+      i.setState({ metadataRes: LOADING_REQUEST });
+      i.setState({
+        metadataRes: await HttpService.client.getSiteMetadata({ url }),
       });
     }
   }
+});
 
-  handlePostBodyChange(val: string) {
-    this.setState(s => ((s.form.body = val), s));
-  }
-
-  handlePostBodyBlur(val: string) {
-    this.updateUrl(() => this.props.onBodyBlur?.(val));
-  }
-
-  handleLanguageChange(val: number[]) {
-    this.setState(s => ((s.form.language_id = val.at(0)), s));
-    this.updateUrl(() => this.props.onLanguageChange?.(val.at(0)));
-  }
-
-  handleCommunitySearch = debounce(async (text: string) => {
-    const { selectedCommunityChoice } = this.props;
-    this.setState({ communitySearchLoading: true });
-
-    const newOptions: Choice[] = [];
-
-    if (selectedCommunityChoice) {
-      newOptions.push(selectedCommunityChoice);
-    }
-
-    if (text.length > 0) {
-      newOptions.push(
-        ...filterCommunitySelection(
-          await fetchCommunities(text),
-          this.props.myUserInfo,
-        ).map(communityToChoice),
-      );
-
-      this.setState({
-        communitySearchOptions: newOptions,
-      });
-    }
-
-    this.setState({
-      communitySearchLoading: false,
+const fetchSimilarPosts = debounce(async (i: PostForm) => {
+  const search_term = i.state.form.name;
+  if (search_term && search_term !== "") {
+    i.setState({ suggestedPostsRes: LOADING_REQUEST });
+    i.setState({
+      suggestedPostsRes: await HttpService.client.getPosts({
+        search_term,
+        search_title_only: true,
+        limit: 5,
+        sort: "top",
+        type_: "all",
+        community_id: i.state.form.community_id,
+      }),
     });
+  }
+});
+
+function updateUrl(i: PostForm, update: () => void) {
+  i.setState({ bypassNavWarning: true });
+  update();
+  i.setState({ bypassNavWarning: false });
+}
+
+function handlePostSubmit(i: PostForm, event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+
+  const pForm = i.state.form;
+  const pv = i.props.post_view;
+  const scheduled_publish_time_at = getUnixTimeLemmy(
+    pForm.scheduled_publish_time_at,
+  );
+
+  if (pv) {
+    if (i.editorType === "creator") {
+      i.props.onEdit?.(
+        {
+          post_id: pv.post.id,
+          name: pForm.name,
+          url: pForm.url,
+          body: pForm.body,
+          nsfw: pForm.nsfw,
+          language_id: pForm.language_id,
+          custom_thumbnail: pForm.custom_thumbnail,
+          alt_text: pForm.alt_text,
+          tags: pForm.tags,
+          scheduled_publish_time_at,
+        },
+        () => {
+          i.setState({ bypassNavWarning: true });
+        },
+      );
+    } else if (i.editorType === "mod_or_admin") {
+      i.props.onModEdit?.(
+        {
+          post_id: pv.post.id,
+          nsfw: pForm.nsfw,
+          tags: pForm.tags,
+        },
+        () => {
+          i.setState({ bypassNavWarning: true });
+        },
+      );
+    }
+  } else if (pForm.name && pForm.community_id) {
+    i.props.onCreate?.(
+      {
+        name: pForm.name,
+        community_id: pForm.community_id,
+        url: pForm.url,
+        body: pForm.body,
+        nsfw: pForm.nsfw,
+        language_id: pForm.language_id,
+        honeypot: pForm.honeypot,
+        custom_thumbnail: pForm.custom_thumbnail,
+        alt_text: pForm.alt_text,
+        tags: pForm.tags,
+        scheduled_publish_time_at,
+      },
+      () => {
+        i.setState({ bypassNavWarning: true });
+      },
+    );
+  }
+}
+function handlePostBodyChange(i: PostForm, val: string) {
+  i.setState(s => ((s.form.body = val), s));
+}
+
+function handlePostBodyBlur(i: PostForm, val: string) {
+  updateUrl(i, () => i.props.onBodyBlur?.(val));
+}
+
+function handleLanguageChange(i: PostForm, val: number[]) {
+  i.setState(s => ((s.form.language_id = val.at(0)), s));
+  updateUrl(i, () => i.props.onLanguageChange?.(val.at(0)));
+}
+
+const handleCommunitySearch = debounce(async (i: PostForm, text: string) => {
+  const { selectedCommunityChoice } = i.props;
+  i.setState({ communitySearchLoading: true });
+
+  const newOptions: Choice[] = [];
+
+  if (selectedCommunityChoice) {
+    newOptions.push(selectedCommunityChoice);
+  }
+
+  if (text.length > 0) {
+    newOptions.push(
+      ...filterCommunitySelection(
+        await searchCommunities(text),
+        i.props.myUserInfo,
+      ).map(communityToChoice),
+    );
+
+    i.setState({
+      communitySearchOptions: newOptions,
+    });
+  }
+
+  i.setState({
+    communitySearchLoading: false,
   });
+});
 
-  handleCommunitySelect(choice: Choice) {
-    this.updateUrl(() => this.props.onSelectCommunity?.(choice));
+function handleCommunitySelect(i: PostForm, choice: Choice) {
+  updateUrl(i, () => i.props.onSelectCommunity?.(choice));
+}
+
+async function handleCopySuggestedTitle(i: PostForm, suggestedTitle?: string) {
+  if (suggestedTitle) {
+    i.setState(
+      s => (
+        (s.form.name = suggestedTitle?.substring(0, MAX_POST_TITLE_LENGTH)),
+        s
+      ),
+    );
+    await fetchSimilarPosts(i);
+    i.setState({ suggestedPostsRes: EMPTY_REQUEST });
+    setTimeout(() => {
+      if (i.postTitleRef.current) {
+        autosize.update(i.postTitleRef.current);
+      }
+    }, 10);
+
+    updateUrl(i, () =>
+      i.props.onCopySuggestedTitle?.(i.state.form.url!, suggestedTitle),
+    );
+  }
+}
+
+async function handlePostUrlChange(
+  i: PostForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  const url = event.target.value;
+
+  i.setState(prev => ({
+    ...prev,
+    form: {
+      ...prev.form,
+      url,
+    },
+    uploadedImage: undefined,
+  }));
+
+  await fetchPageTitle(i);
+}
+
+function handlePostNsfwChange(i: PostForm, event: FormEvent<HTMLInputElement>) {
+  i.setState(s => ((s.form.nsfw = event.target.checked), s));
+
+  updateUrl(i, () =>
+    i.props.onNsfwChange?.(event.target.checked ? "true" : "false"),
+  );
+}
+
+function handlePostScheduleChange(
+  i: PostForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  const scheduled_publish_time = event.target.value;
+
+  i.setState(
+    s => ((s.form.scheduled_publish_time_at = scheduled_publish_time), s),
+  );
+}
+
+function handleHoneyPotChange(i: PostForm, event: FormEvent<HTMLInputElement>) {
+  i.setState(s => ((s.form.honeypot = event.target.value), s));
+}
+
+function handleAltTextChange(i: PostForm, event: FormEvent<HTMLInputElement>) {
+  i.setState(s => ((s.form.alt_text = event.target.value), s));
+}
+
+function handleCustomThumbnailChange(
+  i: PostForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState(s => ((s.form.custom_thumbnail = event.target.value), s));
+}
+
+function handleCancel(i: PostForm) {
+  i.props.onCancel?.();
+}
+
+async function handleImageUploadPaste(
+  i: PostForm,
+  event: ClipboardEvent<HTMLInputElement>,
+) {
+  const image = event.clipboardData?.files[0];
+  if (image) {
+    await handleImageUpload(i, image);
+  }
+}
+
+async function handleImageUpload(
+  i: PostForm,
+  event: File | FormEvent<HTMLInputElement>,
+) {
+  let file: File | undefined;
+  if (event instanceof Event) {
+    event.preventDefault();
+    file = event.target.files?.[0];
+  } else {
+    file = event;
   }
 
-  updateUrl(update: () => void) {
-    this.setState({ bypassNavWarning: true });
-    update();
-    this.setState({ bypassNavWarning: false });
+  i.setState({ imageLoading: true });
+
+  if (file) {
+    const res = await HttpService.client.uploadImage({ image: file });
+    if (res.state === "success") {
+      const url = res.data.image_url;
+      i.setState(prev => ({
+        ...prev,
+        form: {
+          ...prev.form,
+          url,
+        },
+        uploadedImage: res.data,
+      }));
+    } else if (res.state === "failed") {
+      console.error(res.err.name);
+      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
+    }
+    i.setState({ imageLoading: false });
   }
+}
+
+function handleTagsChange(i: PostForm, choices: Choice[]) {
+  i.setState(s => ((s.form.tags = choices.map(c => Number(c.value))), s));
+}
+
+async function handlePostNameChange(
+  i: PostForm,
+  event: FormEvent<HTMLTextAreaElement>,
+) {
+  i.setState(s => ((s.form.name = event.target.value), s));
+  await fetchSimilarPosts(i);
+}
+
+async function handleImageDelete(i: PostForm) {
+  const { uploadedImage } = i.state;
+
+  if (uploadedImage) {
+    await HttpService.client.deleteMedia({
+      filename: uploadedImage.filename,
+    });
+  }
+
+  i.setState(prev => ({
+    ...prev,
+    uploadedImage: undefined,
+    imageLoading: false,
+    form: {
+      ...prev.form,
+      url: "",
+    },
+  }));
 }

@@ -1,4 +1,4 @@
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { Component } from "inferno";
 import {
   CreatePrivateMessage,
   CreatePrivateMessageReport,
@@ -18,26 +18,29 @@ import { PrivateMessageForm } from "./private-message-form";
 import ModActionFormModal from "../common/modal/mod-action-form-modal";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import { mark_as_read_i18n } from "@utils/app";
-
-interface PrivateMessageState {
-  showReply: boolean;
-  showEdit: boolean;
-  collapsed: boolean;
-  viewSource: boolean;
-  showReportDialog: boolean;
-  deleteLoading: boolean;
-  readLoading: boolean;
-}
+import ActionButton from "@components/common/content-actions/action-button";
+import classNames from "classnames";
 
 interface PrivateMessageProps {
   private_message_view: PrivateMessageView;
   myUserInfo: MyUserInfo | undefined;
-  onDelete(form: DeletePrivateMessage): void;
-  onReport(form: CreatePrivateMessageReport): void;
-  onCreate(form: CreatePrivateMessage): Promise<boolean>;
-  onEdit(form: EditPrivateMessage): Promise<boolean>;
   read: boolean;
-  onMarkRead(privateMessageId: PrivateMessageId, read: boolean): void;
+  createOrEditLoading: boolean;
+  deleteLoading: boolean;
+  readLoading: boolean;
+  imageUploadDisabled: boolean;
+  onDelete: (form: DeletePrivateMessage) => void;
+  onReport: (form: CreatePrivateMessageReport) => void;
+  onCreate: (form: CreatePrivateMessage) => void;
+  onEdit: (form: EditPrivateMessage) => void;
+  onMarkRead: (privateMessageId: PrivateMessageId, read: boolean) => void;
+}
+
+interface PrivateMessageState {
+  showReply: boolean;
+  showEdit: boolean;
+  viewSource: boolean;
+  showReportDialog: boolean;
 }
 
 @tippyMixin
@@ -48,29 +51,9 @@ export class PrivateMessage extends Component<
   state: PrivateMessageState = {
     showReply: false,
     showEdit: false,
-    collapsed: false,
     viewSource: false,
     showReportDialog: false,
-    deleteLoading: false,
-    readLoading: false,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-    this.handleReplyCancel = this.handleReplyCancel.bind(this);
-    this.handleReportSubmit = this.handleReportSubmit.bind(this);
-    this.hideReportDialog = this.hideReportDialog.bind(this);
-    this.handleCreate = this.handleCreate.bind(this);
-    this.handleEdit = this.handleEdit.bind(this);
-  }
-
-  componentWillReceiveProps(
-    nextProps: Readonly<{ children?: InfernoNode } & PrivateMessageProps>,
-  ) {
-    if (this.props.private_message_view !== nextProps.private_message_view) {
-      this.setState({ readLoading: false });
-    }
-  }
 
   get mine(): boolean {
     return (
@@ -86,54 +69,42 @@ export class PrivateMessage extends Component<
       : message_view.creator;
 
     return (
-      <div className="private-message border-top border-light">
+      <div className="private-message border-top border-light-subtle">
+        <div className="row row-cols-auto align-items-center g-1 mb-2">
+          <div className="col text-muted small">
+            {this.mine
+              ? I18NextService.i18n.t("to")
+              : I18NextService.i18n.t("from")}
+          </div>
+          <div className="col small me-auto">
+            <PersonListing
+              person={otherPerson}
+              banned={false}
+              myUserInfo={this.props.myUserInfo}
+              muted={false}
+            />
+          </div>
+          <div className="col text-muted small">
+            <MomentTime
+              published={message_view.private_message.published_at}
+              updated={message_view.private_message.updated_at}
+              showAgo={false}
+            />
+          </div>
+        </div>
         <div>
-          <ul className="list-inline mb-0 text-muted small">
-            {/* TODO refactor this */}
-            <li className="list-inline-item">
-              {this.mine
-                ? I18NextService.i18n.t("to")
-                : I18NextService.i18n.t("from")}
-            </li>
-            <li className="list-inline-item">
-              <PersonListing
-                person={otherPerson}
-                banned={false}
-                myUserInfo={this.props.myUserInfo}
-              />
-            </li>
-            <li className="list-inline-item">
-              <span>
-                <MomentTime
-                  published={message_view.private_message.published_at}
-                  updated={message_view.private_message.updated_at}
-                />
-              </span>
-            </li>
-            <li className="list-inline-item">
-              <button
-                type="button"
-                className="pointer text-monospace p-0 bg-transparent border-0 d-block"
-                onClick={linkEvent(this, this.handleMessageCollapse)}
-              >
-                {this.state.collapsed ? (
-                  <Icon icon="plus-square" />
-                ) : (
-                  <Icon icon="minus-square" />
-                )}
-              </button>
-            </li>
-          </ul>
           {this.state.showEdit && (
             <PrivateMessageForm
               recipient={otherPerson}
               privateMessageView={message_view}
               myUserInfo={this.props.myUserInfo}
-              onEdit={this.handleEdit}
-              onCancel={this.handleReplyCancel}
+              onEdit={form => handleEdit(this, form)}
+              onCancel={() => handleReplyCancel(this)}
+              createOrEditLoading={this.props.createOrEditLoading}
+              imageUploadDisabled={this.props.imageUploadDisabled}
             />
           )}
-          {!this.state.showEdit && !this.state.collapsed && (
+          {!this.state.showEdit && (
             <div>
               {this.state.viewSource ? (
                 <pre>{this.messageUnlessRemoved}</pre>
@@ -146,21 +117,21 @@ export class PrivateMessage extends Component<
                   )}
                 />
               )}
-              <ul className="list-inline mb-0 text-muted fw-bold">
+              <div className="row row-cols-auto align-items-center justify-content-end justify-content-md-start g-3 mb-2 mt-1 text-muted fw-bold">
                 {!this.mine && (
                   <>
                     {
-                      <li className="list-inline-item">
+                      <div className="col">
                         <button
                           type="button"
-                          className="btn btn-link btn-animate text-muted"
-                          onClick={linkEvent(this, this.handleMarkRead)}
+                          className="btn btn-sm border-light-subtle btn-animate text-muted"
+                          onClick={() => handleMarkRead(this)}
                           data-tippy-content={mark_as_read_i18n(
                             this.props.read,
                           )}
                           aria-label={mark_as_read_i18n(this.props.read)}
                         >
-                          {this.state.readLoading ? (
+                          {this.props.readLoading ? (
                             <Spinner />
                           ) : (
                             <Icon
@@ -171,52 +142,84 @@ export class PrivateMessage extends Component<
                             />
                           )}
                         </button>
-                      </li>
+                      </div>
                     }
-                    <li className="list-inline-item">{this.reportButton}</li>
-                    <li className="list-inline-item">
+                    <div className="col">{this.reportButton}</div>
+                    <div className="col">
                       <button
                         type="button"
-                        className="btn btn-link btn-animate text-muted"
-                        onClick={linkEvent(this, this.handleReplyClick)}
+                        className="btn btn-sm border-light-subtle btn-animate text-muted"
+                        onClick={() => handleReplyClick(this)}
                         data-tippy-content={I18NextService.i18n.t("reply")}
                         aria-label={I18NextService.i18n.t("reply")}
                       >
                         <Icon icon="reply1" classes="icon-inline" />
                       </button>
-                    </li>
+                    </div>
+                    <div className="col">
+                      <button
+                        type="button"
+                        className="btn btn-sm border-light-subtle btn-animate text-muted"
+                        onClick={() =>
+                          handleDeleteClick(
+                            this,
+                            message_view.private_message.deleted_by_recipient,
+                          )
+                        }
+                        data-tippy-content={getDeleteButtonText(
+                          message_view.private_message.deleted_by_recipient,
+                        )}
+                        aria-label={getDeleteButtonText(
+                          message_view.private_message.deleted_by_recipient,
+                        )}
+                      >
+                        {this.props.deleteLoading ? (
+                          <Spinner />
+                        ) : (
+                          <Icon
+                            icon="trash"
+                            classes={classNames("icon-inline", {
+                              "text-danger":
+                                message_view.private_message
+                                  .deleted_by_recipient,
+                            })}
+                          />
+                        )}
+                      </button>
+                    </div>
                   </>
                 )}
                 {this.mine && (
                   <>
-                    <li className="list-inline-item">
+                    <div className="col">
                       <button
                         type="button"
-                        className="btn btn-link btn-animate text-muted"
-                        onClick={linkEvent(this, this.handleEditClick)}
+                        className="btn btn-sm border-light-subtle btn-animate text-muted"
+                        onClick={() => handleEditClick(this)}
                         data-tippy-content={I18NextService.i18n.t("edit")}
                         aria-label={I18NextService.i18n.t("edit")}
                       >
                         <Icon icon="edit" classes="icon-inline" />
                       </button>
-                    </li>
-                    <li className="list-inline-item">
+                    </div>
+                    <div className="col">
                       <button
                         type="button"
-                        className="btn btn-link btn-animate text-muted"
-                        onClick={linkEvent(this, this.handleDeleteClick)}
-                        data-tippy-content={
-                          !message_view.private_message.deleted
-                            ? I18NextService.i18n.t("delete")
-                            : I18NextService.i18n.t("restore")
+                        className="btn btn-sm border-light-subtle btn-animate text-muted"
+                        onClick={() =>
+                          handleDeleteClick(
+                            this,
+                            message_view.private_message.deleted,
+                          )
                         }
-                        aria-label={
-                          !message_view.private_message.deleted
-                            ? I18NextService.i18n.t("delete")
-                            : I18NextService.i18n.t("restore")
-                        }
+                        data-tippy-content={getDeleteButtonText(
+                          message_view.private_message.deleted,
+                        )}
+                        aria-label={getDeleteButtonText(
+                          message_view.private_message.deleted,
+                        )}
                       >
-                        {this.state.deleteLoading ? (
+                        {this.props.deleteLoading ? (
                           <Spinner />
                         ) : (
                           <Icon
@@ -228,14 +231,14 @@ export class PrivateMessage extends Component<
                           />
                         )}
                       </button>
-                    </li>
+                    </div>
                   </>
                 )}
-                <li className="list-inline-item">
+                <div className="col">
                   <button
                     type="button"
-                    className="btn btn-link btn-animate text-muted"
-                    onClick={linkEvent(this, this.handleViewSource)}
+                    className="btn btn-sm border-light-subtle btn-animate text-muted"
+                    onClick={() => handleViewSource(this)}
                     data-tippy-content={I18NextService.i18n.t("view_source")}
                     aria-label={I18NextService.i18n.t("view_source")}
                   >
@@ -246,16 +249,17 @@ export class PrivateMessage extends Component<
                       }`}
                     />
                   </button>
-                </li>
-              </ul>
+                </div>
+              </div>
             </div>
           )}
         </div>
         <ModActionFormModal
-          onSubmit={this.handleReportSubmit}
+          onSubmit={reason => handleReportSubmit(this, reason)}
           modActionType="report-message"
-          onCancel={this.hideReportDialog}
+          onCancel={() => handleHideReportDialog(this)}
           show={this.state.showReportDialog}
+          loading={false}
         />
         {this.state.showReply && (
           <div className="row">
@@ -264,107 +268,99 @@ export class PrivateMessage extends Component<
                 replyType
                 recipient={otherPerson}
                 myUserInfo={this.props.myUserInfo}
-                onCreate={this.handleCreate}
-                onCancel={this.handleReplyCancel}
+                onCreate={form => handleCreate(this, form)}
+                createOrEditLoading={this.props.createOrEditLoading}
+                imageUploadDisabled={this.props.imageUploadDisabled}
               />
             </div>
           </div>
         )}
-        {/* A collapsed clearfix */}
-        {this.state.collapsed && <div className="row col-12"></div>}
       </div>
     );
   }
 
   get reportButton() {
     return (
-      <button
-        type="button"
-        className="btn btn-link btn-animate text-muted py-0"
-        onClick={linkEvent(this, this.handleShowReportDialog)}
-        data-tippy-content={I18NextService.i18n.t("show_report_dialog")}
-        aria-label={I18NextService.i18n.t("show_report_dialog")}
-      >
-        <Icon icon="flag" inline />
-      </button>
+      <ActionButton
+        onClick={() => handleShowReportDialog(this)}
+        icon="flag"
+        iconClass="text-muted"
+        inline
+        label={I18NextService.i18n.t("show_report_dialog")}
+        noLoading
+      />
     );
   }
 
   get messageUnlessRemoved(): string {
     const message = this.props.private_message_view.private_message;
-    return message.deleted
+    return message.deleted || message.deleted_by_recipient
       ? `*${I18NextService.i18n.t("deleted")}*`
       : message.content;
   }
+}
 
-  handleReplyClick(i: PrivateMessage) {
-    i.setState({ showReply: true });
-  }
+function handleReplyClick(i: PrivateMessage) {
+  i.setState({ showReply: true });
+}
 
-  handleEditClick(i: PrivateMessage) {
-    i.setState({ showEdit: true });
-  }
+function handleEditClick(i: PrivateMessage) {
+  i.setState({ showEdit: true });
+}
 
-  handleDeleteClick(i: PrivateMessage) {
-    i.setState({ deleteLoading: true });
-    i.props.onDelete({
-      private_message_id: i.props.private_message_view.private_message.id,
-      deleted: !i.props.private_message_view.private_message.deleted,
-    });
-  }
+function handleDeleteClick(i: PrivateMessage, deleted: boolean) {
+  i.props.onDelete({
+    private_message_id: i.props.private_message_view.private_message.id,
+    deleted: !deleted,
+  });
+}
 
-  handleReplyCancel() {
-    this.setState({ showReply: false, showEdit: false });
-  }
+function handleReplyCancel(i: PrivateMessage) {
+  i.setState({ showReply: false, showEdit: false });
+}
 
-  async handleCreate(form: CreatePrivateMessage): Promise<boolean> {
-    const success = await this.props.onCreate(form);
-    if (success) {
-      this.setState({ showReply: false });
-    }
-    return success;
-  }
+function handleCreate(i: PrivateMessage, form: CreatePrivateMessage) {
+  i.props.onCreate(form);
+  i.setState({ showReply: false });
+}
 
-  async handleEdit(form: EditPrivateMessage): Promise<boolean> {
-    const success = await this.props.onEdit(form);
-    if (success) {
-      this.setState({ showEdit: false });
-    }
-    return success;
-  }
+function handleEdit(i: PrivateMessage, form: EditPrivateMessage) {
+  i.props.onEdit(form);
+  i.setState({ showEdit: false });
+}
 
-  handleMarkRead(i: PrivateMessage) {
-    i.setState({ readLoading: true });
-    i.props.onMarkRead(
-      i.props.private_message_view.private_message.id,
-      !i.props.read,
-    );
-  }
+function handleMarkRead(i: PrivateMessage) {
+  i.props.onMarkRead(
+    i.props.private_message_view.private_message.id,
+    !i.props.read,
+  );
+}
 
-  handleMessageCollapse(i: PrivateMessage) {
-    i.setState({ collapsed: !i.state.collapsed });
-  }
+function handleViewSource(i: PrivateMessage) {
+  i.setState({ viewSource: !i.state.viewSource });
+}
 
-  handleViewSource(i: PrivateMessage) {
-    i.setState({ viewSource: !i.state.viewSource });
-  }
+function handleShowReportDialog(i: PrivateMessage) {
+  i.setState({ showReportDialog: true });
+}
 
-  handleShowReportDialog(i: PrivateMessage) {
-    i.setState({ showReportDialog: true });
-  }
+function handleHideReportDialog(i: PrivateMessage) {
+  i.setState({
+    showReportDialog: false,
+  });
+}
 
-  hideReportDialog() {
-    this.setState({
-      showReportDialog: false,
-    });
-  }
+function handleReportSubmit(i: PrivateMessage, reason: string) {
+  i.props.onReport({
+    private_message_id: i.props.private_message_view.private_message.id,
+    reason,
+  });
 
-  async handleReportSubmit(reason: string) {
-    this.props.onReport({
-      private_message_id: this.props.private_message_view.private_message.id,
-      reason,
-    });
+  handleHideReportDialog(i);
+}
 
-    this.hideReportDialog();
-  }
+function getDeleteButtonText(deleted: boolean) {
+  return !deleted
+    ? I18NextService.i18n.t("delete")
+    : I18NextService.i18n.t("restore");
 }

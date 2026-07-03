@@ -22,20 +22,18 @@ interface CommentFormProps {
   edit?: boolean;
   disabled?: boolean;
   focus?: boolean;
-  onReplyCancel?(): void;
   allLanguages: Language[];
   siteLanguages: number[];
   containerClass?: string;
   myUserInfo: MyUserInfo | undefined;
-  onCreateComment(form: CreateComment): void;
-  onEditComment(form: EditComment): void;
+  loading: boolean;
+  onCreateComment: (form: CreateComment) => void;
+  onEditComment: (form: EditComment) => void;
+  onReplyCancel?: () => void;
+  imageUploadDisabled: boolean;
 }
 
-export class CommentForm extends Component<CommentFormProps, any> {
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
+export class CommentForm extends Component<CommentFormProps, never> {
   render() {
     const initialContent =
       typeof this.props.node !== "number"
@@ -49,6 +47,11 @@ export class CommentForm extends Component<CommentFormProps, any> {
     const disabled =
       this.props.disabled || userNotLoggedInOrBanned(this.props.myUserInfo);
 
+    const initialLanguageId =
+      typeof this.props.node !== "number"
+        ? this.props.node.view.comment_view.comment.language_id
+        : undefined;
+
     return (
       <div
         className={["comment-form", "mb-3", this.props.containerClass].join(
@@ -58,6 +61,7 @@ export class CommentForm extends Component<CommentFormProps, any> {
         {this.props.myUserInfo ? (
           <MarkdownTextArea
             initialContent={initialContent}
+            initialLanguageId={initialLanguageId}
             showLanguage
             buttonTitle={this.buttonTitle}
             replyType={typeof this.props.node !== "number"}
@@ -71,6 +75,8 @@ export class CommentForm extends Component<CommentFormProps, any> {
             allLanguages={this.props.allLanguages}
             siteLanguages={this.props.siteLanguages}
             myUserInfo={this.props.myUserInfo}
+            loading={this.props.loading}
+            imageUploadDisabled={this.props.imageUploadDisabled}
           />
         ) : (
           <div className="alert alert-warning" role="alert">

@@ -5,18 +5,17 @@ import {
   setIsoData,
   toast,
 } from "@utils/app";
-import { cursorComponents, randomStr, resourcesSettled } from "@utils/helpers";
+import { resourcesSettled } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
 import { amAdmin } from "@utils/roles";
-import { DirectionalCursor, RouteDataResponse } from "@utils/types";
-import classNames from "classnames";
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { ItemIdAndRes, itemLoading, RouteDataResponse } from "@utils/types";
+import { Component, InfernoNode } from "inferno";
 import {
   CommentReportResponse,
   GetSiteResponse,
   LemmyHttp,
   ListReports,
-  ListReportsResponse,
+  PagedResponse,
   PostReportResponse,
   PrivateMessageReportResponse,
   ReportCombinedView,
@@ -31,6 +30,10 @@ import {
   RemoveComment,
   Person,
   Community,
+  CommentReportId,
+  PostReportId,
+  PrivateMessageReportId,
+  CommunityReportId,
 } from "lemmy-js-client";
 import { InitialFetchRequest } from "@utils/types";
 import { FirstLoadService, HttpService, I18NextService } from "../../services";
@@ -47,7 +50,7 @@ import { PostReport } from "../post/post-report";
 import { PrivateMessageReport } from "../private_message/private-message-report";
 import { UnreadCounterService } from "../../services";
 import { getHttpBaseInternal } from "../../utils/env";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { isBrowser } from "@utils/browser";
 import { PaginatorCursor } from "../common/paginator-cursor";
@@ -56,22 +59,29 @@ import ModActionFormModal, {
   BanUpdateForm,
 } from "@components/common/modal/mod-action-form-modal";
 import { futureDaysToUnixTime } from "@utils/date";
-
-enum UnreadOrAll {
-  Unread,
-  All,
-}
+import {
+  FilterChipDropdown,
+  FilterOption,
+} from "@components/common/filter-chip-dropdown";
+import { FilterChipCheckbox } from "@components/common/filter-chip-checkbox";
 
 type ReportsData = RouteDataResponse<{
-  reportsRes: ListReportsResponse;
+  reportsRes: PagedResponse<ReportCombinedView>;
 }>;
 
 interface ReportsState {
-  reportsRes: RequestState<ListReportsResponse>;
-  unreadOrAll: UnreadOrAll;
-  messageType: ReportType;
+  reportsRes: RequestState<PagedResponse<ReportCombinedView>>;
+  commentResolveRes: ItemIdAndRes<CommentReportId, CommentReportResponse>;
+  postResolveRes: ItemIdAndRes<PostReportId, PostReportResponse>;
+  pmResolveRes: ItemIdAndRes<
+    PrivateMessageReportId,
+    PrivateMessageReportResponse
+  >;
+  communityResolveRes: ItemIdAndRes<CommunityReportId, CommunityReportResponse>;
+  showUnresolvedOnly: boolean;
+  reportType: ReportType;
   siteRes: GetSiteResponse;
-  cursor?: DirectionalCursor;
+  cursor?: PaginationCursor;
   isIsomorphic: boolean;
   banFromCommunityForm?: BanFromCommunityData;
   adminBanForm?: BanFromSiteData;
@@ -85,6 +95,14 @@ export type ReportsFetchConfig = IRoutePropsWithFetch<
   Record<string, never>,
   Record<string, never>
 >;
+
+const reportTypeOptions: FilterOption<ReportType>[] = [
+  { value: "all", i18n: "all" },
+  { value: "posts", i18n: "posts" },
+  { value: "comments", i18n: "comments" },
+  { value: "private_messages", i18n: "messages" },
+  { value: "communities", i18n: "communities" },
+];
 
 // These are needed because ModActionFormModal requires full Person/Community, but the api forms
 // (BanFromCommunity) only contain PersonId/CommunityId.
@@ -104,8 +122,12 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   private isoData = setIsoData<ReportsData>(this.context);
   state: ReportsState = {
     reportsRes: EMPTY_REQUEST,
-    unreadOrAll: UnreadOrAll.Unread,
-    messageType: "all",
+    commentResolveRes: { id: 0, res: EMPTY_REQUEST },
+    postResolveRes: { id: 0, res: EMPTY_REQUEST },
+    pmResolveRes: { id: 0, res: EMPTY_REQUEST },
+    communityResolveRes: { id: 0, res: EMPTY_REQUEST },
+    showUnresolvedOnly: true,
+    reportType: "all",
     siteRes: this.isoData.siteRes,
     isIsomorphic: false,
     showCommunityRuleViolations: false,
@@ -115,28 +137,8 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     return resourcesSettled([this.state.reportsRes]);
   }
 
-  constructor(props: any, context: any) {
+  constructor(props: ReportsRouteProps, context: object) {
     super(props, context);
-
-    this.handlePageChange = this.handlePageChange.bind(this);
-    this.handleResolveCommentReport =
-      this.handleResolveCommentReport.bind(this);
-    this.handleResolvePostReport = this.handleResolvePostReport.bind(this);
-    this.handleResolvePrivateMessageReport =
-      this.handleResolvePrivateMessageReport.bind(this);
-    this.handleResolveCommunityReport =
-      this.handleResolveCommunityReport.bind(this);
-    this.handleRemovePost = this.handleRemovePost.bind(this);
-    this.handleRemoveComment = this.handleRemoveComment.bind(this);
-    this.handleAdminBan = this.handleAdminBan.bind(this);
-    this.handleModBanFromCommunity = this.handleModBanFromCommunity.bind(this);
-    this.handleSubmitBanFromCommunity =
-      this.handleSubmitBanFromCommunity.bind(this);
-    this.handleSubmitAdminBan = this.handleSubmitAdminBan.bind(this);
-    this.handleCloseModActionModals =
-      this.handleCloseModActionModals.bind(this);
-    this.handleClickshowCommunityReports =
-      this.handleClickshowCommunityReports.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -177,30 +179,32 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
       <div className="person-reports container-lg">
         {banFromCommunityForm && (
           <ModActionFormModal
-            onSubmit={this.handleSubmitBanFromCommunity}
+            onSubmit={form => handleSubmitBanFromCommunity(this, form)}
             modActionType="community-ban"
             creator={banFromCommunityForm.person}
             community={banFromCommunityForm.community}
             isBanned={!banFromCommunityForm.ban}
-            onCancel={this.handleCloseModActionModals}
+            onCancel={() => handleCloseModActionModals(this)}
             show
+            loading={false}
           />
         )}
         {adminBanForm && (
           <ModActionFormModal
-            onSubmit={this.handleSubmitAdminBan}
+            onSubmit={form => handleSubmitAdminBan(this, form)}
             modActionType="site-ban"
             creator={adminBanForm.person}
             isBanned={!adminBanForm.ban}
-            onCancel={this.handleCloseModActionModals}
+            onCancel={() => handleCloseModActionModals(this)}
             show
+            loading={false}
           />
         )}
         <div className="row">
           <div className="col-12">
             <HtmlTags
               title={this.documentTitle}
-              path={this.context.router.route.match.url}
+              context={this.context as RouterContext}
             />
             <h1 className="h4 mb-4">{I18NextService.i18n.t("reports")}</h1>
             {this.selects()}
@@ -208,7 +212,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
             <PaginatorCursor
               current={this.state.cursor}
               resource={this.state.reportsRes}
-              onPageChange={this.handlePageChange}
+              onPageChange={cursor => handlePageChange(this, cursor)}
             />
           </div>
         </div>
@@ -217,7 +221,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   }
 
   get section() {
-    switch (this.state.messageType) {
+    switch (this.state.reportType) {
       case "all": {
         return this.all();
       }
@@ -240,168 +244,43 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  unreadOrAllRadios() {
-    const radioId = randomStr();
+  reportTypeFilters() {
+    // Only show communities and private messages if you're an admin.
+    const options = amAdmin(this.isoData.myUserInfo)
+      ? reportTypeOptions
+      : reportTypeOptions.filter(
+          v => !["private_messages", "communities"].includes(v.value),
+        );
 
     return (
-      <div className="btn-group btn-group-toggle flex-wrap mb-2" role="group">
-        <input
-          id={`${radioId}-unread`}
-          type="radio"
-          className="btn-check"
-          value={UnreadOrAll.Unread}
-          checked={this.state.unreadOrAll === UnreadOrAll.Unread}
-          onChange={linkEvent(this, this.handleUnreadOrAllChange)}
-        />
-        <label
-          htmlFor={`${radioId}-unread`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.unreadOrAll === UnreadOrAll.Unread,
-          })}
-        >
-          {I18NextService.i18n.t("unread")}
-        </label>
-
-        <input
-          id={`${radioId}-all`}
-          type="radio"
-          className="btn-check"
-          value={UnreadOrAll.All}
-          checked={this.state.unreadOrAll === UnreadOrAll.All}
-          onChange={linkEvent(this, this.handleUnreadOrAllChange)}
-        />
-        <label
-          htmlFor={`${radioId}-all`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.unreadOrAll === UnreadOrAll.All,
-          })}
-        >
-          {I18NextService.i18n.t("all")}
-        </label>
-      </div>
-    );
-  }
-
-  messageTypeRadios() {
-    const radioId = randomStr();
-
-    return (
-      <div className="btn-group btn-group-toggle flex-wrap mb-2" role="group">
-        <input
-          id={`${radioId}-all`}
-          type="radio"
-          className="btn-check"
-          value={"all"}
-          checked={this.state.messageType === "all"}
-          onChange={linkEvent(this, this.handleMessageTypeChange)}
-        />
-        <label
-          htmlFor={`${radioId}-all`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.messageType === "all",
-          })}
-        >
-          {I18NextService.i18n.t("all")}
-        </label>
-
-        <input
-          id={`${radioId}-comments`}
-          type="radio"
-          className="btn-check"
-          value={"comments"}
-          checked={this.state.messageType === "comments"}
-          onChange={linkEvent(this, this.handleMessageTypeChange)}
-        />
-        <label
-          htmlFor={`${radioId}-comments`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.messageType === "comments",
-          })}
-        >
-          {I18NextService.i18n.t("comments")}
-        </label>
-
-        <input
-          id={`${radioId}-posts`}
-          type="radio"
-          className="btn-check"
-          value={"posts"}
-          checked={this.state.messageType === "posts"}
-          onChange={linkEvent(this, this.handleMessageTypeChange)}
-        />
-        <label
-          htmlFor={`${radioId}-posts`}
-          className={classNames("btn btn-outline-secondary pointer", {
-            active: this.state.messageType === "posts",
-          })}
-        >
-          {I18NextService.i18n.t("posts")}
-        </label>
-
-        {amAdmin(this.isoData.myUserInfo) && (
-          <>
-            <input
-              id={`${radioId}-messages`}
-              type="radio"
-              className="btn-check"
-              value={"private_messages"}
-              checked={this.state.messageType === "private_messages"}
-              onChange={linkEvent(this, this.handleMessageTypeChange)}
-            />
-            <label
-              htmlFor={`${radioId}-messages`}
-              className={classNames("btn btn-outline-secondary pointer", {
-                active: this.state.messageType === "private_messages",
-              })}
-            >
-              {I18NextService.i18n.t("messages")}
-            </label>
-
-            <input
-              id={`${radioId}-communities`}
-              type="radio"
-              className="btn-check"
-              value={"communities"}
-              checked={this.state.messageType === "communities"}
-              onChange={linkEvent(this, this.handleMessageTypeChange)}
-            />
-            <label
-              htmlFor={`${radioId}-communities`}
-              className={classNames("btn btn-outline-secondary pointer", {
-                active: this.state.messageType === "communities",
-              })}
-            >
-              {I18NextService.i18n.t("communities")}
-            </label>
-          </>
-        )}
-      </div>
+      <FilterChipDropdown
+        label={"type"}
+        allOptions={options}
+        currentOption={options.find(t => t.value === this.state.reportType)}
+        onSelect={val => handleReportTypeChange(this, val)}
+      />
     );
   }
 
   selects() {
     return (
-      <div className="mb-2">
-        <span className="me-3">{this.unreadOrAllRadios()}</span>
-        <span className="me-3">{this.messageTypeRadios()}</span>
+      <div className="row row-cols-auto align-items-center g-3 mb-2">
+        <div className="col">
+          <FilterChipCheckbox
+            option={"show_unresolved_only"}
+            isChecked={this.state.showUnresolvedOnly}
+            onCheck={val => handleShowUnresolvedOnlyChange(this, val)}
+          />
+        </div>
+        <div className="col">{this.reportTypeFilters()}</div>
         {this.isoData.myUserInfo?.local_user_view.local_user.admin && (
-          <span className="me-3">
-            <div
-              className="btn-group btn-group-toggle flex-wrap mb-2"
-              role="group"
-            >
-              <button
-                className="btn btn-secondary"
-                onClick={this.handleClickshowCommunityReports}
-              >
-                {I18NextService.i18n.t(
-                  this.state.showCommunityRuleViolations
-                    ? "hide_community_reports"
-                    : "show_community_reports",
-                )}
-              </button>
-            </div>
-          </span>
+          <div className="col">
+            <FilterChipCheckbox
+              option={"show_community_reports"}
+              isChecked={this.state.showCommunityRuleViolations ?? false}
+              onCheck={val => handleClickshowCommunityReports(this, val)}
+            />
+          </div>
         )}
       </div>
     );
@@ -418,10 +297,15 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
             myUserInfo={this.isoData.myUserInfo}
             localSite={siteRes.site_view.local_site}
             admins={this.isoData.siteRes.admins}
-            onResolveReport={this.handleResolveCommentReport}
-            onRemoveComment={this.handleRemoveComment}
-            onAdminBan={this.handleAdminBan}
-            onModBanFromCommunity={this.handleModBanFromCommunity}
+            loading={
+              itemLoading(this.state.commentResolveRes) === i.comment_report.id
+            }
+            onResolveReport={form => handleResolveCommentReport(this, form)}
+            onRemoveComment={form => handleRemoveComment(this, form)}
+            onAdminBan={form => handleAdminBan(this, form)}
+            onModBanFromCommunity={form =>
+              handleModBanFromCommunity(this, form)
+            }
           />
         );
       case "post":
@@ -434,10 +318,15 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
             myUserInfo={this.isoData.myUserInfo}
             localSite={siteRes.site_view.local_site}
             admins={this.isoData.siteRes.admins}
-            onResolveReport={this.handleResolvePostReport}
-            onRemovePost={this.handleRemovePost}
-            onAdminBan={this.handleAdminBan}
-            onModBanFromCommunity={this.handleModBanFromCommunity}
+            loading={
+              itemLoading(this.state.postResolveRes) === i.post_report.id
+            }
+            onResolveReport={form => handleResolvePostReport(this, form)}
+            onRemovePost={form => handleRemovePost(this, form)}
+            onAdminBan={form => handleAdminBan(this, form)}
+            onModBanFromCommunity={form =>
+              handleModBanFromCommunity(this, form)
+            }
           />
         );
       case "private_message":
@@ -445,7 +334,13 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           <PrivateMessageReport
             key={i.type_ + i.private_message_report.id}
             report={i}
-            onResolveReport={this.handleResolvePrivateMessageReport}
+            onResolveReport={form =>
+              handleResolvePrivateMessageReport(this, form)
+            }
+            loading={
+              itemLoading(this.state.pmResolveRes) ===
+              i.private_message_report.id
+            }
             myUserInfo={this.isoData.myUserInfo}
           />
         );
@@ -454,14 +349,18 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           <CommunityReport
             key={i.type_ + i.community_report.id}
             report={i}
-            onResolveReport={this.handleResolveCommunityReport}
+            loading={
+              itemLoading(this.state.communityResolveRes) ===
+              i.community_report.id
+            }
+            onResolveReport={form => handleResolveCommunityReport(this, form)}
             myUserInfo={this.isoData.myUserInfo}
           />
         );
     }
   }
 
-  all() {
+  all(): InfernoNode | void {
     switch (this.state.reportsRes.state) {
       case "loading":
         return (
@@ -472,7 +371,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
       case "success":
         return (
           <div>
-            {this.state.reportsRes.data.reports.map(i => (
+            {this.state.reportsRes.data.items.map(i => (
               <>
                 <hr />
                 {this.renderItemType(i)}
@@ -483,7 +382,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  commentReports() {
+  commentReports(): InfernoNode | void {
     const res = this.state.reportsRes;
     const siteRes = this.state.siteRes;
     switch (res.state) {
@@ -494,7 +393,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.reports.filter(r => r.type_ === "comment");
+        const reports = res.data.items.filter(r => r.type_ === "comment");
         return (
           <div>
             {reports.map(cr => (
@@ -506,10 +405,18 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                   myUserInfo={this.isoData.myUserInfo}
                   localSite={siteRes.site_view.local_site}
                   admins={this.isoData.siteRes.admins}
-                  onResolveReport={this.handleResolveCommentReport}
-                  onRemoveComment={this.handleRemoveComment}
-                  onAdminBan={this.handleAdminBan}
-                  onModBanFromCommunity={this.handleModBanFromCommunity}
+                  loading={
+                    itemLoading(this.state.commentResolveRes) ===
+                    cr.comment_report.id
+                  }
+                  onResolveReport={form =>
+                    handleResolveCommentReport(this, form)
+                  }
+                  onRemoveComment={form => handleRemoveComment(this, form)}
+                  onAdminBan={form => handleAdminBan(this, form)}
+                  onModBanFromCommunity={form =>
+                    handleModBanFromCommunity(this, form)
+                  }
                 />
               </>
             ))}
@@ -519,7 +426,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  postReports() {
+  postReports(): InfernoNode | void {
     const res = this.state.reportsRes;
     const siteRes = this.state.siteRes;
     switch (res.state) {
@@ -530,7 +437,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.reports.filter(r => r.type_ === "post");
+        const reports = res.data.items.filter(r => r.type_ === "post");
         return (
           <div>
             {reports.map(pr => (
@@ -544,10 +451,15 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                   myUserInfo={this.isoData.myUserInfo}
                   localSite={siteRes.site_view.local_site}
                   admins={this.isoData.siteRes.admins}
-                  onResolveReport={this.handleResolvePostReport}
-                  onRemovePost={this.handleRemovePost}
-                  onAdminBan={this.handleAdminBan}
-                  onModBanFromCommunity={this.handleModBanFromCommunity}
+                  loading={
+                    itemLoading(this.state.postResolveRes) === pr.post_report.id
+                  }
+                  onResolveReport={form => handleResolvePostReport(this, form)}
+                  onRemovePost={form => handleRemovePost(this, form)}
+                  onAdminBan={form => handleAdminBan(this, form)}
+                  onModBanFromCommunity={form =>
+                    handleModBanFromCommunity(this, form)
+                  }
                 />
               </>
             ))}
@@ -557,7 +469,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  privateMessageReports() {
+  privateMessageReports(): InfernoNode | void {
     const res = this.state.reportsRes;
     switch (res.state) {
       case "loading":
@@ -567,7 +479,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.reports.filter(
+        const reports = res.data.items.filter(
           r => r.type_ === "private_message",
         );
         return (
@@ -578,7 +490,13 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                 <PrivateMessageReport
                   key={pmr.private_message_report.id}
                   report={pmr}
-                  onResolveReport={this.handleResolvePrivateMessageReport}
+                  loading={
+                    itemLoading(this.state.pmResolveRes) ===
+                    pmr.private_message_report.id
+                  }
+                  onResolveReport={form =>
+                    handleResolvePrivateMessageReport(this, form)
+                  }
                   myUserInfo={this.isoData.myUserInfo}
                 />
               </>
@@ -589,7 +507,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  communityReports() {
+  communityReports(): InfernoNode | void {
     const res = this.state.reportsRes;
     switch (res.state) {
       case "loading":
@@ -599,7 +517,7 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
           </h5>
         );
       case "success": {
-        const reports = res.data.reports.filter(r => r.type_ === "community");
+        const reports = res.data.items.filter(r => r.type_ === "community");
         return (
           <div>
             {reports.map(cr => (
@@ -608,7 +526,13 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
                 <CommunityReport
                   key={cr.community_report.id}
                   report={cr}
-                  onResolveReport={this.handleResolveCommunityReport}
+                  loading={
+                    itemLoading(this.state.communityResolveRes) ===
+                    cr.community_report.id
+                  }
+                  onResolveReport={form =>
+                    handleResolveCommunityReport(this, form)
+                  }
                   myUserInfo={this.isoData.myUserInfo}
                 />
               </>
@@ -619,38 +543,9 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     }
   }
 
-  async handlePageChange(cursor?: DirectionalCursor) {
-    this.setState({ cursor });
-    await this.refetch();
-  }
-
-  async handleUnreadOrAllChange(i: Reports, event: any) {
-    i.setState({
-      unreadOrAll: Number(event.target.value),
-      cursor: undefined,
-    });
-    await i.refetch();
-  }
-
-  async handleMessageTypeChange(i: Reports, event: any) {
-    switch (event.target.value) {
-      case "all":
-      case "comments":
-      case "posts":
-      case "private_messages":
-      case "communities": {
-        i.setState({
-          messageType: event.target.value,
-          cursor: undefined,
-        });
-        await i.refetch();
-      }
-    }
-  }
-
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
-  }: InitialFetchRequest): Promise<ReportsData> {
+  }: InitialFetchRequest): Promise<ReportsData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -664,12 +559,11 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     return {
       reportsRes: await client.listReports(reportsForm),
     };
-  }
+  };
 
   refetchToken?: symbol;
   async refetch() {
     const token = (this.refetchToken = Symbol());
-    const unresolved_only = this.state.unreadOrAll === UnreadOrAll.Unread;
     const cursor = this.state.cursor;
 
     this.setState({
@@ -677,10 +571,10 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     });
 
     const form: ListReports = {
-      unresolved_only,
-      type_: this.state.messageType,
+      unresolved_only: this.state.showUnresolvedOnly,
+      type_: this.state.reportType,
       show_community_rule_violations: this.state.showCommunityRuleViolations,
-      ...cursorComponents(cursor),
+      page_cursor: cursor,
     };
 
     const reportPromise = HttpService.client
@@ -694,99 +588,12 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     await Promise.all([reportPromise]);
   }
 
-  async handleResolveCommentReport(form: ResolveCommentReport) {
-    const res = await HttpService.client.resolveCommentReport(form);
-    this.findAndUpdateCommentReport(res);
-    this.update();
-  }
-
-  async handleResolvePostReport(form: ResolvePostReport) {
-    const res = await HttpService.client.resolvePostReport(form);
-    this.findAndUpdatePostReport(res);
-    this.update();
-  }
-
-  async handleRemovePost(form: RemovePost) {
-    await HttpService.client.removePost(form);
-    this.update();
-  }
-
-  async handleRemoveComment(form: RemoveComment) {
-    await HttpService.client.removeComment(form);
-    this.update();
-  }
-
-  handleModBanFromCommunity(form: BanFromCommunityData) {
-    this.setState({ banFromCommunityForm: form });
-  }
-
-  handleAdminBan(form: BanFromSiteData) {
-    this.setState({ adminBanForm: form });
-  }
-
-  async handleResolvePrivateMessageReport(form: ResolvePrivateMessageReport) {
-    const res = await HttpService.client.resolvePrivateMessageReport(form);
-    this.findAndUpdatePrivateMessageReport(res);
-
-    this.update();
-  }
-
-  async handleResolveCommunityReport(form: ResolveCommunityReport) {
-    const res = await HttpService.client.resolveCommunityReport(form);
-    toast("Not implemented");
-    this.findAndUpdateCommunityReport(res);
-    this.update();
-  }
-
-  async handleSubmitBanFromCommunity(form: BanUpdateForm) {
-    const banFromCommunityForm = this.state.banFromCommunityForm;
-    if (banFromCommunityForm) {
-      await HttpService.client.banFromCommunity({
-        person_id: banFromCommunityForm.person.id,
-        community_id: banFromCommunityForm.community.id,
-        ban: banFromCommunityForm.ban,
-        expires_at: futureDaysToUnixTime(form.daysUntilExpires),
-        reason: form.reason,
-      });
-      this.setState({ banFromCommunityForm: undefined });
-      this.update();
-    }
-  }
-
-  async handleSubmitAdminBan(form: BanUpdateForm) {
-    const adminBanForm = this.state.adminBanForm;
-    if (adminBanForm) {
-      await HttpService.client.banPerson({
-        person_id: adminBanForm.person.id,
-        ban: adminBanForm.ban,
-        expires_at: futureDaysToUnixTime(form.daysUntilExpires),
-        reason: form.reason,
-      });
-      this.setState({ adminBanForm: undefined });
-      this.update();
-    }
-  }
-
-  handleCloseModActionModals() {
-    this.setState({
-      adminBanForm: undefined,
-      banFromCommunityForm: undefined,
-    });
-  }
-
-  handleClickshowCommunityReports() {
-    this.setState({
-      showCommunityRuleViolations: !this.state.showCommunityRuleViolations,
-    });
-    this.update();
-  }
-
   findAndUpdateCommentReport(res: RequestState<CommentReportResponse>) {
     this.setState(s => {
       if (s.reportsRes.state === "success" && res.state === "success") {
-        s.reportsRes.data.reports = editCombined(
+        s.reportsRes.data.items = editCombined(
           { type_: "comment", ...res.data.comment_report_view },
-          s.reportsRes.data.reports,
+          s.reportsRes.data.items,
           getUncombinedReport,
         );
       }
@@ -797,9 +604,9 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   findAndUpdatePostReport(res: RequestState<PostReportResponse>) {
     this.setState(s => {
       if (s.reportsRes.state === "success" && res.state === "success") {
-        s.reportsRes.data.reports = editCombined(
+        s.reportsRes.data.items = editCombined(
           { type_: "post", ...res.data.post_report_view },
-          s.reportsRes.data.reports,
+          s.reportsRes.data.items,
           getUncombinedReport,
         );
       }
@@ -812,9 +619,9 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   ) {
     this.setState(s => {
       if (s.reportsRes.state === "success" && res.state === "success") {
-        s.reportsRes.data.reports = editCombined(
+        s.reportsRes.data.items = editCombined(
           { type_: "private_message", ...res.data.private_message_report_view },
-          s.reportsRes.data.reports,
+          s.reportsRes.data.items,
           getUncombinedReport,
         );
       }
@@ -825,9 +632,9 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
   findAndUpdateCommunityReport(res: RequestState<CommunityReportResponse>) {
     this.setState(s => {
       if (s.reportsRes.state === "success" && res.state === "success") {
-        s.reportsRes.data.reports = editCombined(
+        s.reportsRes.data.items = editCombined(
           { type_: "community", ...res.data.community_report_view },
-          s.reportsRes.data.reports,
+          s.reportsRes.data.items,
           getUncombinedReport,
         );
       }
@@ -835,8 +642,151 @@ export class Reports extends Component<ReportsRouteProps, ReportsState> {
     });
   }
 
-  update() {
-    UnreadCounterService.Instance.updateReports();
-    this.refetch();
+  async update() {
+    await UnreadCounterService.Instance.updateUnreadCounts();
+    await this.refetch();
   }
+}
+
+async function handlePageChange(i: Reports, cursor?: PaginationCursor) {
+  i.setState({ cursor });
+  await i.refetch();
+}
+
+async function handleShowUnresolvedOnlyChange(
+  i: Reports,
+  showUnresolvedOnly: boolean,
+) {
+  i.setState({
+    showUnresolvedOnly,
+    cursor: undefined,
+  });
+  await i.refetch();
+}
+
+async function handleReportTypeChange(i: Reports, val: ReportType) {
+  i.setState({
+    reportType: val,
+    cursor: undefined,
+  });
+  await i.refetch();
+}
+
+async function handleResolveCommentReport(
+  i: Reports,
+  form: ResolveCommentReport,
+) {
+  i.setState({
+    commentResolveRes: { id: form.report_id, res: LOADING_REQUEST },
+  });
+  const res = await HttpService.client.resolveCommentReport(form);
+  i.setState({ commentResolveRes: { id: form.report_id, res } });
+  i.findAndUpdateCommentReport(res);
+  await i.update();
+}
+
+async function handleResolvePostReport(i: Reports, form: ResolvePostReport) {
+  i.setState({
+    postResolveRes: { id: form.report_id, res: LOADING_REQUEST },
+  });
+  const res = await HttpService.client.resolvePostReport(form);
+  i.setState({
+    postResolveRes: { id: form.report_id, res },
+  });
+  i.findAndUpdatePostReport(res);
+  await i.update();
+}
+
+async function handleRemovePost(i: Reports, form: RemovePost) {
+  await HttpService.client.removePost(form);
+  await i.update();
+}
+
+async function handleRemoveComment(i: Reports, form: RemoveComment) {
+  await HttpService.client.removeComment(form);
+  await i.update();
+}
+
+function handleModBanFromCommunity(i: Reports, form: BanFromCommunityData) {
+  i.setState({ banFromCommunityForm: form });
+}
+
+function handleAdminBan(i: Reports, form: BanFromSiteData) {
+  i.setState({ adminBanForm: form });
+}
+
+async function handleResolvePrivateMessageReport(
+  i: Reports,
+  form: ResolvePrivateMessageReport,
+) {
+  i.setState({
+    pmResolveRes: { id: form.report_id, res: LOADING_REQUEST },
+  });
+  const res = await HttpService.client.resolvePrivateMessageReport(form);
+  i.setState({
+    pmResolveRes: { id: form.report_id, res },
+  });
+  i.findAndUpdatePrivateMessageReport(res);
+
+  await i.update();
+}
+
+async function handleResolveCommunityReport(
+  i: Reports,
+  form: ResolveCommunityReport,
+) {
+  i.setState({
+    communityResolveRes: { id: form.report_id, res: LOADING_REQUEST },
+  });
+  const res = await HttpService.client.resolveCommunityReport(form);
+  i.setState({
+    communityResolveRes: { id: form.report_id, res },
+  });
+  // TODO
+  toast("Not implemented");
+  i.findAndUpdateCommunityReport(res);
+  await i.update();
+}
+
+async function handleSubmitBanFromCommunity(i: Reports, form: BanUpdateForm) {
+  const banFromCommunityForm = i.state.banFromCommunityForm;
+  if (banFromCommunityForm) {
+    await HttpService.client.banFromCommunity({
+      person_id: banFromCommunityForm.person.id,
+      community_id: banFromCommunityForm.community.id,
+      ban: banFromCommunityForm.ban,
+      expires_at: futureDaysToUnixTime(form.daysUntilExpires),
+      reason: form.reason,
+    });
+    i.setState({ banFromCommunityForm: undefined });
+    await i.update();
+  }
+}
+
+async function handleSubmitAdminBan(i: Reports, form: BanUpdateForm) {
+  const adminBanForm = i.state.adminBanForm;
+  if (adminBanForm) {
+    await HttpService.client.banPerson({
+      person_id: adminBanForm.person.id,
+      ban: adminBanForm.ban,
+      expires_at: futureDaysToUnixTime(form.daysUntilExpires),
+      reason: form.reason,
+    });
+    i.setState({ adminBanForm: undefined });
+    await i.update();
+  }
+}
+
+function handleCloseModActionModals(i: Reports) {
+  i.setState({
+    adminBanForm: undefined,
+    banFromCommunityForm: undefined,
+  });
+}
+
+async function handleClickshowCommunityReports(i: Reports, val: boolean) {
+  i.setState({
+    showCommunityRuleViolations: val,
+  });
+  await i.update();
 }

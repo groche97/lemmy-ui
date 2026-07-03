@@ -1,9 +1,10 @@
-// TODO this should probably be combined with community-link and person-link
 import { hostname } from "@utils/helpers";
 import { Component } from "inferno";
 import { Link } from "inferno-router";
 import { MultiCommunity, MyUserInfo } from "lemmy-js-client";
 import { relTags } from "@utils/config";
+import classNames from "classnames";
+import { I18NextService } from "@services/I18NextService";
 
 interface Props {
   multiCommunity: MultiCommunity;
@@ -13,11 +14,7 @@ interface Props {
   myUserInfo: MyUserInfo | undefined;
 }
 
-export class MultiCommunityLink extends Component<Props, any> {
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
+export class MultiCommunityLink extends Component<Props, never> {
   render() {
     const { multiCommunity, useApubName } = this.props;
 
@@ -45,7 +42,7 @@ export class MultiCommunityLink extends Component<Props, any> {
 
   name(title: string, serverStr?: string) {
     return (
-      <span className="overflow-wrap-anywhere">
+      <span className="overflow-wrap-unknownwhere">
         {title}
         {serverStr && <small className="text-muted">{serverStr}</small>}
       </span>
@@ -74,4 +71,23 @@ export function multiCommunityLink(
 
     return { link, serverStr };
   }
+}
+
+type MultiCommunitySettingLinkProps = {
+  multi: MultiCommunity;
+};
+export function MultiCommunitySettingsLink({
+  multi,
+}: MultiCommunitySettingLinkProps) {
+  const classes = classNames(
+    "btn btn-light border-light-subtle d-block mb-2 w-100",
+  );
+
+  const link = `${multiCommunityLink(multi).link}/settings`;
+
+  return (
+    <Link className={classes} to={link}>
+      {I18NextService.i18n.t("settings")}
+    </Link>
+  );
 }

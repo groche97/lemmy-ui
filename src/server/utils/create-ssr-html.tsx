@@ -9,13 +9,23 @@ import { buildThemeList } from "./build-themes-list";
 import { fetchIconPng } from "./fetch-icon-png";
 import { findLanguageChunkNames } from "@services/I18NextService";
 import path from "path";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { enableEruda } from "./dev-env";
 
 const customHtmlHeader = process.env["LEMMY_UI_CUSTOM_HTML_HEADER"] || "";
 
 let appleTouchIcon: string | undefined = undefined;
 
-let embeddedScript = readFileSync(path.resolve("./dist/js/embedded.js"));
+function readEmbeddedScript() {
+  const scriptFile = "./dist/js/embedded.js";
+  const embeddedScript = readFileSync(path.resolve(scriptFile)).toString();
+  if (existsSync(scriptFile + ".map")) {
+    return `${embeddedScript}\n//# sourceMappingURL=${getStaticDir()}/js/embedded.js.map`;
+  }
+  return embeddedScript;
+}
+
+let embeddedScript = readEmbeddedScript();
 
 export async function createSsrHtml(
   root: string,
@@ -27,7 +37,7 @@ export async function createSsrHtml(
   const site = isoData.siteRes;
 
   if (process.env["NODE_ENV"] === "development") {
-    embeddedScript = readFileSync(path.resolve("./dist/js/embedded.js"));
+    embeddedScript = readEmbeddedScript();
   }
 
   const fallbackTheme = `<link rel="stylesheet" type="text/css" href="/css/themes/${
@@ -35,6 +45,7 @@ export async function createSsrHtml(
   }.css" />`;
 
   const customHtmlHeaderScriptTag = new RegExp("<script", "g");
+
   const customHtmlHeaderWithNonce = customHtmlHeader.replace(
     customHtmlHeaderScriptTag,
     `<script nonce="${cspNonce}"`,
@@ -66,20 +77,17 @@ export async function createSsrHtml(
     }
   }
 
-  const erudaStr =
-    process.env["NODE_ENV"] === "development"
-      ? renderToString(
-          <>
-            <script
-              nonce={cspNonce}
-              src="//cdn.jsdelivr.net/npm/eruda"
-            ></script>
-            <script nonce={cspNonce}>eruda.init();</script>
-          </>,
-        )
-      : "";
-
-  const helmet = Helmet.renderStatic();
+  const erudaStr = enableEruda
+    ? renderToString(
+        <>
+          <script
+            nonce={cspNonce}
+            src="https://cdn.jsdelivr.net/npm/eruda/eruda.js"
+          ></script>
+          <script nonce={cspNonce}>eruda.init();</script>
+        </>,
+      )
+    : "";
 
   const lazyScripts = findLanguageChunkNames(languages, interfaceLanguage)
     .filter(x => x !== undefined)
@@ -87,9 +95,23 @@ export async function createSsrHtml(
     .map(x => `<link rel="preload" as="script" href="${x}" />`)
     .join("");
 
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+  const helmet = Helmet.renderStatic();
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+  const helmetAttr = helmet.htmlAttributes.toString();
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+  const helmetTitle = helmet.title.toString();
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+  const helmetMeta = helmet.meta.toString();
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+  const helmetLink = helmet.link.toString();
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+  const helmetBodyAttr = helmet.bodyAttributes.toString();
+
   return `
     <!DOCTYPE html>
-    <html ${helmet.htmlAttributes.toString()}>
+    <html ${helmetAttr}>
     <head>
     <script nonce="${cspNonce}">
     window.isoData = ${serialize(isoData)};
@@ -104,10 +126,10 @@ export async function createSsrHtml(
     <!-- Custom injected script -->
     ${customHtmlHeaderWithNonce}
   
-    ${helmet.title.toString()}
-    ${helmet.meta.toString()}
+    ${helmetTitle}
+    ${helmetMeta}
   
-    <style>
+    <style nonce="${cspNonce}">
     #app[data-adult-consent] {
       filter: blur(10px);
       -webkit-filter: blur(10px);
@@ -131,18 +153,18 @@ export async function createSsrHtml(
   
     <!-- Web app manifest -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href=${appleTouchIcon} />
-    <link rel="apple-touch-startup-image" href=${appleTouchIcon} />
+    <link rel="apple-touch-icon" href="${appleTouchIcon}" />
+    <link rel="apple-touch-startup-image" href="${appleTouchIcon}" />
   
     <!-- Styles -->
     <link rel="stylesheet" type="text/css" href="${getStaticDir()}/styles/styles.css" />
   
     <!-- Current theme and more -->
-    ${helmet.link.toString() || fallbackTheme}
+    ${helmetLink || fallbackTheme}
     
     </head>
   
-    <body ${helmet.bodyAttributes.toString()}>
+    <body ${helmetBodyAttr}>
       <noscript>
         <div class="alert alert-danger rounded-0" role="alert">
           <b>Javascript is disabled. Actions will not work.</b>

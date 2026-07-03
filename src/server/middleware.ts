@@ -1,6 +1,6 @@
-import * as crypto from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import { getJwtCookie } from "./utils/has-jwt-cookie";
+import { v4 as uuidv4 } from "uuid";
 
 export function setDefaultCsp({
   res,
@@ -9,16 +9,16 @@ export function setDefaultCsp({
   res: Response;
   next: NextFunction;
 }) {
-  res.locals.cspNonce = crypto.randomBytes(16).toString("hex");
+  res.locals.cspNonce = uuidv4();
 
-  res.setHeader(
+  res.set(
     "Content-Security-Policy",
     `default-src 'self';
      manifest-src *;
      connect-src *;
      img-src * data: blob:;
      script-src 'self' 'nonce-${res.locals.cspNonce}';
-     style-src 'self' 'unsafe-inline';
+     style-src 'self' 'nonce-${res.locals.cspNonce}';
      form-action 'self';
      base-uri 'self';
      frame-src *;
@@ -39,10 +39,6 @@ export function setCacheControl(
   res: Response,
   next: NextFunction,
 ) {
-  if (process.env.NODE_ENV !== "production") {
-    return next();
-  }
-
   let caching: string;
 
   // Only allow caching for success responses
@@ -54,7 +50,7 @@ export function setCacheControl(
       // Static content gets cached publicly for a day
       caching = "public, max-age=86400";
     } else {
-      res.setHeader("Vary", "Cookie, Accept, Accept-Language");
+      res.set("Vary", "Cookie, Accept, Accept-Language");
       if (getJwtCookie(req.headers)) {
         caching = "private";
       } else {
@@ -62,7 +58,7 @@ export function setCacheControl(
       }
     }
 
-    res.setHeader("Cache-Control", caching);
+    res.set("Cache-Control", caching);
   }
 
   next();

@@ -8,10 +8,12 @@ import {
   BanPerson,
   BlockCommunity,
   BlockPerson,
+  CommentId,
   Community,
   CreateComment,
   CreateCommentLike,
   CreateCommentReport,
+  CreateCommentWarning,
   DeleteComment,
   DistinguishComment,
   EditComment,
@@ -29,7 +31,11 @@ import {
   SaveComment,
   TransferCommunity,
 } from "lemmy-js-client";
-import { CommentViewType, CommentNodeType } from "@utils/types";
+import {
+  CommentViewType,
+  CommentNodeType,
+  ShowMarkReadType,
+} from "@utils/types";
 import { CommentNode } from "./comment-node";
 
 interface CommentNodesProps {
@@ -52,6 +58,12 @@ interface CommentNodesProps {
   showContext: boolean;
   showCommunity: boolean;
   viewType: CommentViewType;
+  showMarkRead: ShowMarkReadType;
+  showBadgeForPostCreator: boolean;
+  mutePersonName: boolean;
+  muteCommunityName: boolean;
+  hideAvatar: boolean;
+  read?: boolean;
   allLanguages: Language[];
   siteLanguages: number[];
   hideImages: boolean;
@@ -59,33 +71,36 @@ interface CommentNodesProps {
   depth?: number;
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
-  onSaveComment(form: SaveComment): void;
-  onCreateComment(form: CreateComment): void;
-  onEditComment(form: EditComment): void;
-  onCommentVote(form: CreateCommentLike): void;
-  onBlockPerson(form: BlockPerson): void;
-  onBlockCommunity(form: BlockCommunity): void;
-  onDeleteComment(form: DeleteComment): void;
-  onRemoveComment(form: RemoveComment): void;
-  onDistinguishComment(form: DistinguishComment): void;
-  onAddModToCommunity(form: AddModToCommunity): void;
-  onAddAdmin(form: AddAdmin): void;
-  onBanPersonFromCommunity(form: BanFromCommunity): void;
-  onBanPerson(form: BanPerson): void;
-  onTransferCommunity(form: TransferCommunity): void;
-  onFetchChildren?(form: GetComments): void;
-  onCommentReport(form: CreateCommentReport): void;
-  onPurgePerson(form: PurgePerson): void;
-  onPurgeComment(form: PurgeComment): void;
-  onPersonNote(form: NotePerson): void;
-  onLockComment(form: LockComment): void;
+  createLoading: CommentId | undefined;
+  editLoading: CommentId | undefined;
+  markReadLoading: CommentId | undefined;
+  fetchChildrenLoading: CommentId | undefined;
+  voteLoading: CommentId | undefined;
+  onSaveComment: (form: SaveComment) => void;
+  onCreateComment: (form: CreateComment) => void;
+  onEditComment: (form: EditComment) => void;
+  onCommentVote: (form: CreateCommentLike) => void;
+  onBlockPerson: (form: BlockPerson) => void;
+  onBlockCommunity: (form: BlockCommunity) => void;
+  onDeleteComment: (form: DeleteComment) => void;
+  onRemoveComment: (form: RemoveComment) => void;
+  onDistinguishComment: (form: DistinguishComment) => void;
+  onAddModToCommunity: (form: AddModToCommunity) => void;
+  onAddAdmin: (form: AddAdmin) => void;
+  onBanPersonFromCommunity: (form: BanFromCommunity) => void;
+  onBanPerson: (form: BanPerson) => void;
+  onTransferCommunity: (form: TransferCommunity) => void;
+  onFetchChildren: (form: GetComments) => void;
+  onCommentReport: (form: CreateCommentReport) => void;
+  onPurgePerson: (form: PurgePerson) => void;
+  onPurgeComment: (form: PurgeComment) => void;
+  onPersonNote: (form: NotePerson) => void;
+  onLockComment: (form: LockComment) => void;
+  onWarnComment: (form: CreateCommentWarning) => void;
+  onMarkRead: (commentId: CommentId, read: boolean) => void;
 }
 
-export class CommentNodes extends Component<CommentNodesProps, any> {
-  constructor(props: CommentNodesProps, context: any) {
-    super(props, context);
-  }
-
+export class CommentNodes extends Component<CommentNodesProps, never> {
   render() {
     const maxComments = this.props.maxCommentsShown ?? this.props.nodes.length;
 
@@ -98,7 +113,7 @@ export class CommentNodes extends Component<CommentNodesProps, any> {
         <ul
           className={classNames("comments", {
             "ms-1": this.props.depth && this.props.depth > 1,
-            "border-top border-light": !this.props.noBorder,
+            "border-top border-light-subtle": !this.props.noBorder,
           })}
           style={
             this.props.isChild
@@ -116,6 +131,17 @@ export class CommentNodes extends Component<CommentNodesProps, any> {
               postLockedOrRemovedOrDeleted={
                 this.props.postLockedOrRemovedOrDeleted
               }
+              showMarkRead={"hide"}
+              showBadgeForPostCreator={this.props.showBadgeForPostCreator}
+              mutePersonName={this.props.mutePersonName}
+              muteCommunityName={this.props.muteCommunityName}
+              hideAvatar={this.props.hideAvatar}
+              read={this.props.read}
+              createLoading={this.props.createLoading}
+              editLoading={this.props.editLoading}
+              markReadLoading={this.props.markReadLoading}
+              fetchChildrenLoading={this.props.fetchChildrenLoading}
+              voteLoading={this.props.voteLoading}
               admins={this.props.admins}
               readCommentsAt={this.props.readCommentsAt}
               showContext={this.props.showContext}
@@ -146,6 +172,8 @@ export class CommentNodes extends Component<CommentNodesProps, any> {
               onPurgeComment={this.props.onPurgeComment}
               onPersonNote={this.props.onPersonNote}
               onLockComment={this.props.onLockComment}
+              onWarnComment={this.props.onWarnComment}
+              onMarkRead={this.props.onMarkRead}
             />
           ))}
         </ul>

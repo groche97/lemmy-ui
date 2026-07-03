@@ -1,4 +1,4 @@
-import { Component, LinkedEvent, createRef, linkEvent } from "inferno";
+import { Component, createRef } from "inferno";
 import { modalMixin } from "../../mixins/modal-mixin";
 import { adultConsentCookieKey } from "@utils/config";
 import { mdToHtml } from "@utils/markdown";
@@ -6,17 +6,21 @@ import { I18NextService } from "../../../services";
 import { isHttps } from "@utils/env";
 import { IsoData } from "@utils/types";
 import { setIsoData } from "@utils/app";
+import { RouterContext } from "inferno-router";
 
 interface AdultConsentModalProps {
   contentWarning: string;
   show: boolean;
-  onContinue: LinkedEvent<any, Event> | null;
-  onBack: LinkedEvent<any, Event> | null;
+  onContinue: (() => void) | null;
+  onBack: (() => void) | null;
   redirectCountdown: number;
 }
 
 @modalMixin
-class AdultConsentModalInner extends Component<AdultConsentModalProps, any> {
+class AdultConsentModalInner extends Component<
+  AdultConsentModalProps,
+  unknown
+> {
   readonly modalDivRef = createRef<HTMLDivElement>();
   readonly continueButtonRef = createRef<HTMLButtonElement>();
 
@@ -118,7 +122,8 @@ export default class AdultConsentModal extends Component<
 
   componentDidUpdate() {
     if (this.state.redirectCountdown === 0) {
-      this.context.router.history.back();
+      const context = this.context as RouterContext;
+      context.router.history.back();
     }
   }
 
@@ -134,8 +139,8 @@ export default class AdultConsentModal extends Component<
         contentWarning={this.props.contentWarning}
         show={show}
         redirectCountdown={redirectCountdown}
-        onBack={linkEvent(this, handleAdultConsentGoBack)}
-        onContinue={linkEvent(this, handleAdultConsent)}
+        onBack={() => handleAdultConsentGoBack(this)}
+        onContinue={() => handleAdultConsent(this)}
       />
     );
   }

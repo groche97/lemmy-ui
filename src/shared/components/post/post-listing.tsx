@@ -1,4 +1,4 @@
-import { Component } from "inferno";
+import { Component, InfernoNode } from "inferno";
 import {
   AddAdmin,
   AddModToCommunity,
@@ -25,17 +25,28 @@ import {
   PurgePost,
   RemovePost,
   SavePost,
+  CommunityTag,
   TransferCommunity,
+  ModEditPost,
+  CreatePostWarning,
 } from "lemmy-js-client";
-import { ShowBodyType, ShowCrossPostsType } from "@utils/types";
+import {
+  ShowBodyType,
+  ShowCrossPostsType,
+  ShowMarkReadType,
+} from "@utils/types";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import { PostForm } from "./post-form";
 import { PostListingList } from "./post-listing-list";
 import { PostListingCard } from "./post-listing-card";
 import { masonryUpdate } from "@utils/browser";
+import { RouterContext } from "inferno-router";
+import Viewer from "viewerjs";
+import { viewerJsFullSizeImageUrl } from "@components/common/pictrs-image";
 
 type PostListingState = {
   showEdit: boolean;
+  viewerjss: Viewer[];
 };
 
 type PostListingProps = {
@@ -44,6 +55,7 @@ type PostListingProps = {
   crossPosts: PostView[];
   admins: PersonView[];
   allLanguages: Language[];
+  communityTags: CommunityTag[];
   siteLanguages: number[];
   showCommunity: boolean;
   showBody: ShowBodyType;
@@ -54,66 +66,119 @@ type PostListingProps = {
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
   showCrossPosts: ShowCrossPostsType;
-  markable: boolean;
+  showMarkRead: ShowMarkReadType;
   disableAutoMarkAsRead: boolean;
   editLoading: boolean;
-  onPostEdit(form: EditPost): void;
-  onPostVote(form: CreatePostLike): void;
-  onPostReport(form: CreatePostReport): void;
-  onBlockPerson(form: BlockPerson): void;
-  onBlockCommunity(form: BlockCommunity): void;
-  onLockPost(form: LockPost): void;
-  onDeletePost(form: DeletePost): void;
-  onRemovePost(form: RemovePost): void;
-  onSavePost(form: SavePost): void;
-  onFeaturePost(form: FeaturePost): void;
-  onPurgePerson(form: PurgePerson): void;
-  onPurgePost(form: PurgePost): void;
-  onBanPersonFromCommunity(form: BanFromCommunity): void;
-  onBanPerson(form: BanPerson): void;
-  onAddModToCommunity(form: AddModToCommunity): void;
-  onAddAdmin(form: AddAdmin): void;
-  onTransferCommunity(form: TransferCommunity): void;
-  onHidePost(form: HidePost): void;
-  onPersonNote(form: NotePerson): void;
-  onScrollIntoCommentsClick(e: MouseEvent): void;
-  onMarkPostAsRead(form: MarkPostAsRead): void;
+  notificationRead?: boolean;
+  markReadLoading: boolean;
+  voteLoading: boolean;
+  topBorder: boolean;
+  mutePersonName: boolean;
+  muteCommunityName: boolean;
+  hideAvatar: boolean;
+  onPostEdit: (form: EditPost) => void;
+  onPostModEdit: (form: ModEditPost) => void;
+  onPostVote: (form: CreatePostLike) => void;
+  onPostReport: (form: CreatePostReport) => void;
+  onBlockPerson: (form: BlockPerson) => void;
+  onBlockCommunity: (form: BlockCommunity) => void;
+  onLockPost: (form: LockPost) => void;
+  onWarnPost: (form: CreatePostWarning) => void;
+  onDeletePost: (form: DeletePost) => void;
+  onRemovePost: (form: RemovePost) => void;
+  onSavePost: (form: SavePost) => void;
+  onFeaturePost: (form: FeaturePost) => void;
+  onPurgePerson: (form: PurgePerson) => void;
+  onPurgePost: (form: PurgePost) => void;
+  onBanPersonFromCommunity: (form: BanFromCommunity) => void;
+  onBanPerson: (form: BanPerson) => void;
+  onAddModToCommunity: (form: AddModToCommunity) => void;
+  onAddAdmin: (form: AddAdmin) => void;
+  onTransferCommunity: (form: TransferCommunity) => void;
+  onHidePost: (form: HidePost) => void;
+  onPersonNote: (form: NotePerson) => void;
+  onScrollIntoCommentsClick: (e: MouseEvent) => void;
+  onMarkPostAsRead: (form: MarkPostAsRead) => void;
 };
 
 @tippyMixin
 export class PostListing extends Component<PostListingProps, PostListingState> {
   state: PostListingState = {
     showEdit: false,
+    viewerjss: [],
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   unlisten = () => {};
 
-  componentWillMount(): void {
+  componentWillMount() {
     // Leave edit mode on navigation
-    this.unlisten = this.context.router.history.listen(() => {
+    const context = this.context as RouterContext;
+    this.unlisten = context.router.history.listen(() => {
       if (this.state.showEdit) {
         this.setState({ showEdit: false });
       }
     });
   }
 
-  componentWillUnmount(): void {
+  componentWillUnmount() {
     this.unlisten();
+    this.unloadViewerJs();
+  }
+
+  componentWillReceiveProps(
+    nextProps: Readonly<{ children?: InfernoNode } & PostListingProps>,
+  ) {
+    // Close the post edit form if it goes from loading to not.
+    if (this.props.editLoading && !nextProps.editLoading) {
+      this.setState({ showEdit: false });
+    }
+  }
+
+  loadViewerJsForImages(setState: boolean = true) {
+    // Load the image viewer for every image in the post body
+    const id = this.props.postView.post.id;
+    const images = document.querySelectorAll(
+      `#post-listing-${id} > div > article > div > article > div > div > p > img`,
+    );
+    const viewerjss: Viewer[] = [];
+    images.forEach((i: HTMLElement) => {
+      const viewer = new Viewer(i, {
+        url: (image: { src: string }) => viewerJsFullSizeImageUrl(image),
+        toolbar: false,
+      });
+      viewerjss.push(viewer);
+    });
+
+    if (setState) {
+      this.setState({ viewerjss });
+    }
+  }
+
+  unloadViewerJs() {
+    this.state.viewerjss.forEach(v => v.destroy());
+  }
+
+  componentDidMount() {
+    this.loadViewerJsForImages();
+  }
+
+  componentDidUpdate() {
+    this.loadViewerJsForImages(false);
   }
 
   render() {
     const p = this.props;
     return (
-      <div className="post-listing mt-2">
+      <div
+        id={`post-listing-${p.postView.post.id}`}
+        className="post-listing my-2"
+      >
         {!this.state.showEdit ? (
           this.renderListingMode()
         ) : (
           <PostForm
             post_view={p.postView}
+            selectedCommunityTags={this.props.communityTags}
             crossPosts={p.crossPosts}
             admins={p.admins}
             enableNsfw={p.enableNsfw}
@@ -125,6 +190,7 @@ export class PostListing extends Component<PostListingProps, PostListingState> {
             myUserInfo={p.myUserInfo}
             localSite={p.localSite}
             onEdit={p.onPostEdit}
+            onModEdit={p.onPostModEdit}
             onCancel={() => handleEditCancel(this)}
           />
         )}
@@ -147,6 +213,10 @@ export class PostListing extends Component<PostListingProps, PostListingState> {
             myUserInfo={p.myUserInfo}
             localSite={p.localSite}
             showCrossPosts={p.showCrossPosts}
+            voteLoading={p.voteLoading}
+            mutePersonName={p.mutePersonName}
+            muteCommunityName={p.muteCommunityName}
+            hideAvatar={p.hideAvatar}
             onPostVote={p.onPostVote}
             onScrollIntoCommentsClick={p.onScrollIntoCommentsClick}
           />
@@ -166,20 +236,27 @@ export class PostListing extends Component<PostListingProps, PostListingState> {
             hideImage={p.hideImage}
             enableNsfw={p.enableNsfw}
             viewOnly={p.viewOnly}
+            topBorder={p.topBorder}
             showAdultConsentModal={p.showAdultConsentModal}
             myUserInfo={p.myUserInfo}
             localSite={p.localSite}
             showCrossPosts={p.showCrossPosts}
-            markable={p.markable}
+            showMarkRead={p.showMarkRead}
             disableAutoMarkAsRead={p.disableAutoMarkAsRead}
             editLoading={p.editLoading}
+            notificationRead={p.notificationRead}
+            markReadLoading={p.markReadLoading}
+            voteLoading={p.voteLoading}
+            mutePersonName={p.mutePersonName}
+            muteCommunityName={p.muteCommunityName}
+            hideAvatar={p.hideAvatar}
             onEditClick={() => handleEditClick(this)}
-            onPostEdit={p.onPostEdit}
             onPostVote={p.onPostVote}
             onPostReport={p.onPostReport}
             onBlockPerson={p.onBlockPerson}
             onBlockCommunity={p.onBlockCommunity}
             onLockPost={p.onLockPost}
+            onWarnPost={p.onWarnPost}
             onDeletePost={p.onDeletePost}
             onRemovePost={p.onRemovePost}
             onSavePost={p.onSavePost}

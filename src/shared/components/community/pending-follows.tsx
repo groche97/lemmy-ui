@@ -1,22 +1,27 @@
 import { setIsoData } from "@utils/app";
 import {
-  cursorComponents,
   getQueryParams,
   getQueryString,
   resourcesSettled,
 } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
 import {
-  DirectionalCursor,
+  ItemIdAndRes,
+  itemLoading,
   QueryParams,
   RouteDataResponse,
 } from "@utils/types";
 import { Component } from "inferno";
 import {
   ApproveCommunityPendingFollower,
+  CommunityId,
   LemmyHttp,
-  ListCommunityPendingFollowsResponse,
+  PagedResponse,
+  PaginationCursor,
+  PendingFollowerView,
   PendingFollow as PendingFollowView,
+  PersonId,
+  SuccessResponse,
 } from "lemmy-js-client";
 import { fetchLimit } from "@utils/config";
 import { InitialFetchRequest } from "@utils/types";
@@ -33,27 +38,33 @@ import { Spinner } from "../common/icon";
 import { getHttpBaseInternal } from "../../utils/env";
 import { isBrowser } from "@utils/browser";
 import { PaginatorCursor } from "@components/common/paginator-cursor";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { InfernoNode } from "inferno";
 import { PendingFollow } from "@components/common/pending-follow";
 import {
   RegistrationState,
-  RegistrationStateRadios,
-} from "@components/common/registration-state-radios";
+  RegistrationStateDropdown,
+} from "@components/common/registration-state-dropdown";
 
 type PendingFollowsData = RouteDataResponse<{
-  listPendingFollowsResponse: ListCommunityPendingFollowsResponse;
+  listPendingFollowsResponse: PagedResponse<PendingFollowerView>;
 }>;
 
+type CommunityAndPerson = {
+  communityId: CommunityId;
+  personId: PersonId;
+};
+
 interface PendingFollowsState {
-  appsRes: RequestState<ListCommunityPendingFollowsResponse>;
+  appsRes: RequestState<PagedResponse<PendingFollowerView>>;
+  approveRes: ItemIdAndRes<CommunityAndPerson, SuccessResponse>;
   isIsomorphic: boolean;
 }
 
 interface PendingFollowsProps {
   viewState: RegistrationState;
-  cursor?: DirectionalCursor;
+  cursor?: PaginationCursor;
 }
 
 function stateFromQuery(view?: string): RegistrationState {
@@ -96,6 +107,7 @@ export class PendingFollows extends Component<
   private isoData = setIsoData<PendingFollowsData>(this.context);
   state: PendingFollowsState = {
     appsRes: EMPTY_REQUEST,
+    approveRes: { id: { communityId: 0, personId: 0 }, res: EMPTY_REQUEST },
     isIsomorphic: false,
   };
 
@@ -103,13 +115,8 @@ export class PendingFollows extends Component<
     return resourcesSettled([this.state.appsRes]);
   }
 
-  constructor(props: any, context: any) {
+  constructor(props: PendingFollowsRouteProps, context: object) {
     super(props, context);
-
-    this.handlePageChange = this.handlePageChange.bind(this);
-    this.handleApproveFollower = this.handleApproveFollower.bind(this);
-    this.handlePendingFollowsStateChange =
-      this.handlePendingFollowsStateChange.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -127,14 +134,14 @@ export class PendingFollows extends Component<
     }
   }
 
-  componentWillReceiveProps(
+  async componentWillReceiveProps(
     nextProps: PendingFollowsRouteProps & { children?: InfernoNode },
-  ): void {
+  ) {
     if (
       nextProps.viewState !== this.props.viewState ||
       nextProps.cursor !== this.props.cursor
     ) {
-      this.refetch(nextProps);
+      await this.refetch(nextProps);
     }
   }
 
@@ -153,7 +160,7 @@ export class PendingFollows extends Component<
           <div className="col-12">
             <HtmlTags
               title={this.documentTitle}
-              path={this.context.router.route.match.url}
+              context={this.context as RouterContext}
             />
             <h1 className="h4 mb-4">
               {I18NextService.i18n.t("community_pending_follows")}
@@ -165,7 +172,7 @@ export class PendingFollows extends Component<
                 <PaginatorCursor
                   current={this.props.cursor}
                   resource={this.state.appsRes}
-                  onPageChange={this.handlePageChange}
+                  onPageChange={cursor => handlePageChange(this, cursor)}
                 />
               </>
             ) : (
@@ -184,27 +191,35 @@ export class PendingFollows extends Component<
   selects() {
     return (
       <div className="mb-2">
-        <RegistrationStateRadios
-          state={this.props.viewState}
-          onClick={this.handlePendingFollowsStateChange}
+        <RegistrationStateDropdown
+          currentOption={this.props.viewState}
+          onSelect={val => handlePendingFollowsStateChange(this, val)}
         />
       </div>
     );
   }
 
   applicationList(pending: PendingFollowView[]) {
-    if (this.props.viewState === "denied") {
-      pending = pending.filter(p => p.follow_state === "denied");
-    }
+    const pendingFollows =
+      this.props.viewState === "denied"
+        ? pending.filter(p => p.follow_state === "denied")
+        : pending;
+
     return (
       <div>
-        {pending.map(pending_follow => (
+        {pendingFollows.map(pendingFollow => (
           <>
             <hr />
             <PendingFollow
-              pending_follow={pending_follow}
+              pending_follow={pendingFollow}
               myUserInfo={this.isoData.myUserInfo}
-              onApproveFollower={this.handleApproveFollower}
+              loading={
+                itemLoading(this.state.approveRes)?.communityId ===
+                  pendingFollow.community.id &&
+                itemLoading(this.state.approveRes)?.personId ===
+                  pendingFollow.person.id
+              }
+              onApproveFollower={form => handleApproveFollower(this, form)}
             />
           </>
         ))}
@@ -212,15 +227,7 @@ export class PendingFollows extends Component<
     );
   }
 
-  handlePendingFollowsStateChange(val: RegistrationState) {
-    this.updateUrl({ viewState: val, cursor: undefined });
-  }
-
-  handlePageChange(cursor?: DirectionalCursor) {
-    this.updateUrl({ cursor });
-  }
-
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
     match: {
       params: { viewState, cursor },
@@ -228,7 +235,7 @@ export class PendingFollows extends Component<
   }: InitialFetchRequest<
     Record<string, never>,
     PendingFollowsProps
-  >): Promise<PendingFollowsData> {
+  >): Promise<PendingFollowsData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -238,12 +245,12 @@ export class PendingFollows extends Component<
       listPendingFollowsResponse: headers["Authorization"]
         ? await client.listCommunityPendingFollows({
             unread_only: state === "unread",
-            ...cursorComponents(cursor),
+            page_cursor: cursor,
             limit: fetchLimit,
           })
         : EMPTY_REQUEST,
     };
-  }
+  };
 
   refetchToken?: symbol;
   async refetch(props: PendingFollowsProps) {
@@ -254,7 +261,7 @@ export class PendingFollows extends Component<
     });
     const appsRes = await HttpService.client.listCommunityPendingFollows({
       unread_only: viewState === "unread",
-      ...cursorComponents(cursor),
+      page_cursor: cursor,
       limit: fetchLimit,
     });
     if (token === this.refetchToken) {
@@ -262,7 +269,7 @@ export class PendingFollows extends Component<
     }
   }
 
-  async updateUrl(props: Partial<PendingFollowsProps>) {
+  updateUrl(props: Partial<PendingFollowsProps>) {
     const { cursor, viewState: state } = { ...this.props, ...props };
 
     const queryParams: QueryParams<PendingFollowsProps> = {
@@ -272,15 +279,37 @@ export class PendingFollows extends Component<
 
     this.props.history.push(`/pending_follows${getQueryString(queryParams)}`);
   }
+}
 
-  async handleApproveFollower(form: ApproveCommunityPendingFollower) {
-    const approveRes =
-      await HttpService.client.approveCommunityPendingFollow(form);
-    this.setState(s => {
-      if (s.appsRes.state === "success" && approveRes.state === "success") {
-        this.refetch(this.props);
-      }
-      return s;
-    });
+async function handleApproveFollower(
+  i: PendingFollows,
+  form: ApproveCommunityPendingFollower,
+) {
+  i.setState({
+    approveRes: {
+      id: { communityId: form.community_id, personId: form.follower_id },
+      res: LOADING_REQUEST,
+    },
+  });
+  const res = await HttpService.client.approveCommunityPendingFollow(form);
+  i.setState({
+    approveRes: {
+      id: { communityId: form.community_id, personId: form.follower_id },
+      res,
+    },
+  });
+  if (i.state.appsRes.state === "success" && res.state === "success") {
+    await i.refetch(i.props);
   }
+}
+
+function handlePendingFollowsStateChange(
+  i: PendingFollows,
+  val: RegistrationState,
+) {
+  i.updateUrl({ viewState: val, cursor: undefined });
+}
+
+function handlePageChange(i: PendingFollows, cursor?: PaginationCursor) {
+  i.updateUrl({ cursor });
 }

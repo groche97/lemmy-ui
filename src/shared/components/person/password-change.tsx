@@ -1,6 +1,6 @@
 import { setIsoData, updateMyUserInfo } from "@utils/app";
 import { capitalizeFirstLetter } from "@utils/helpers";
-import { Component, linkEvent } from "inferno";
+import { Component, FormEvent } from "inferno";
 import { GetSiteResponse, SuccessResponse } from "lemmy-js-client";
 import { HttpService, I18NextService } from "../../services";
 import {
@@ -13,7 +13,7 @@ import { Spinner } from "../common/icon";
 import PasswordInput from "../common/password-input";
 import { toast } from "@utils/app";
 import { simpleScrollMixin } from "../mixins/scroll-mixin";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 
 interface State {
   passwordChangeRes: RequestState<SuccessResponse>;
@@ -40,10 +40,6 @@ export class PasswordChange extends Component<
     },
   };
 
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
   get documentTitle(): string {
     return `${I18NextService.i18n.t("password_change")} - ${
       this.state.siteRes.site_view.site.name
@@ -55,7 +51,7 @@ export class PasswordChange extends Component<
       <div className="password-change container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         <div className="row">
           <div className="col-12 col-lg-6 offset-lg-3 mb-4">
@@ -71,12 +67,12 @@ export class PasswordChange extends Component<
 
   passwordChangeForm() {
     return (
-      <form onSubmit={linkEvent(this, this.handlePasswordChangeSubmit)}>
+      <form onSubmit={event => this.handlePasswordChangeSubmit(this, event)}>
         <div className="mb-3">
           <PasswordInput
             id="new-password"
             value={this.state.form.password}
-            onInput={linkEvent(this, this.handlePasswordChange)}
+            onInput={event => this.handlePasswordChange(this, event)}
             showStrength
             label={I18NextService.i18n.t("new_password")}
             isNew
@@ -86,13 +82,13 @@ export class PasswordChange extends Component<
           <PasswordInput
             id="password"
             value={this.state.form.password_verify}
-            onInput={linkEvent(this, this.handleVerifyPasswordChange)}
+            onInput={event => this.handleVerifyPasswordChange(this, event)}
             label={I18NextService.i18n.t("verify_password")}
           />
         </div>
         <div className="mb-3 row">
           <div className="col-sm-10">
-            <button type="submit" className="btn btn-secondary">
+            <button type="submit" className="btn btn-light border-light-subtle">
               {this.state.passwordChangeRes.state === "loading" ? (
                 <Spinner />
               ) : (
@@ -105,17 +101,23 @@ export class PasswordChange extends Component<
     );
   }
 
-  handlePasswordChange(i: PasswordChange, event: any) {
+  handlePasswordChange(i: PasswordChange, event: FormEvent<HTMLInputElement>) {
     i.state.form.password = event.target.value;
     i.setState(i.state);
   }
 
-  handleVerifyPasswordChange(i: PasswordChange, event: any) {
+  handleVerifyPasswordChange(
+    i: PasswordChange,
+    event: FormEvent<HTMLInputElement>,
+  ) {
     i.state.form.password_verify = event.target.value;
     i.setState(i.state);
   }
 
-  async handlePasswordChangeSubmit(i: PasswordChange, event: any) {
+  async handlePasswordChangeSubmit(
+    i: PasswordChange,
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
     i.setState({ passwordChangeRes: LOADING_REQUEST });
 
@@ -124,7 +126,7 @@ export class PasswordChange extends Component<
 
     if (password && password_verify) {
       i.setState({
-        passwordChangeRes: await HttpService.client.passwordChangeAfterReset({
+        passwordChangeRes: await HttpService.client.changePasswordAfterReset({
           token: i.state.form.token,
           password,
           password_verify,

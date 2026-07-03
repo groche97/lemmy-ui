@@ -3,28 +3,29 @@ import { Component } from "inferno";
 import {
   CommunityId,
   CommunityView,
-  ListCommunitiesResponse,
+  PagedResponse,
   MyUserInfo,
 } from "lemmy-js-client";
-import { I18NextService } from "../../services";
 import {
   communityToChoice,
-  fetchCommunities,
+  searchCommunities,
   filterCommunitySelection,
 } from "@utils/app";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import { EMPTY_REQUEST, RequestState } from "@services/HttpService";
-import { SearchableSelect } from "@components/common/searchable-select";
 import { Choice } from "@utils/types";
+import { CommunityLink } from "@components/community/community-link";
+import { Icon } from "@components/common/icon";
+import { FilterChipSelect } from "@components/common/filter-chip-select";
 
 interface Props {
   currentCommunities: CommunityView[];
-  onCreate(id: CommunityId): void;
   myUserInfo: MyUserInfo | undefined;
+  onCreate: (id: CommunityId) => void;
 }
 
 interface State {
-  listCommunitiesRes: RequestState<ListCommunitiesResponse>;
+  listCommunitiesRes: RequestState<PagedResponse<CommunityView>>;
   selectedCommunity?: CommunityView;
   communitySearchOptions: Choice[];
   communitySearchLoading: boolean;
@@ -38,10 +39,6 @@ export class MultiCommunityEntryForm extends Component<Props, State> {
     communitySearchLoading: false,
   };
 
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
   render() {
     const id = randomStr();
 
@@ -49,18 +46,16 @@ export class MultiCommunityEntryForm extends Component<Props, State> {
       <div className={`multi-community-entry-form-${id}`}>
         <div className="row">
           <div className="col-12">
-            <SearchableSelect
-              id="multi-community-entry-select"
-              value={this.state.selectedCommunity?.community.id}
-              options={[
-                {
-                  label: I18NextService.i18n.t("add_community"),
-                  value: "",
-                  disabled: true,
-                } as Choice,
-              ].concat(this.state.communitySearchOptions)}
-              loading={this.state.communitySearchLoading}
-              onChange={choice => handleCommunitySelect(this, choice)}
+            <FilterChipSelect
+              label={"add_community"}
+              multiple={false}
+              allOptions={this.state.communitySearchOptions}
+              selectedOptions={
+                this.state.selectedCommunity
+                  ? [this.state.selectedCommunity.community.id.toString()]
+                  : []
+              }
+              onSelect={choices => handleCommunitySelect(this, choices)}
               onSearch={res => handleCommunitySearch(this, res)}
             />
           </div>
@@ -70,8 +65,8 @@ export class MultiCommunityEntryForm extends Component<Props, State> {
   }
 }
 
-function handleCommunitySelect(i: MultiCommunityEntryForm, choice: Choice) {
-  const communityId = getIdFromString(choice.value);
+function handleCommunitySelect(i: MultiCommunityEntryForm, choices: Choice[]) {
+  const communityId = getIdFromString(choices[0].value);
   if (communityId) {
     i.props.onCreate(communityId);
   }
@@ -86,7 +81,7 @@ const handleCommunitySearch = debounce(
     if (text.length > 0) {
       newOptions.push(
         ...filterCommunitySelection(
-          await fetchCommunities(text),
+          await searchCommunities(text),
           i.props.myUserInfo,
         )
           // Filter out currently selected comms
@@ -109,3 +104,48 @@ const handleCommunitySearch = debounce(
     });
   },
 );
+
+interface MultiCommunityEntryListProps {
+  communities: CommunityView[];
+  isCreator: boolean;
+  onDelete?: (communityId: CommunityId) => void;
+  myUserInfo: MyUserInfo | undefined;
+}
+
+export function MultiCommunityEntryList({
+  communities,
+  isCreator,
+  onDelete,
+  myUserInfo,
+}: MultiCommunityEntryListProps) {
+  return (
+    communities.length > 0 && (
+      <div id="multi-community-entry-table">
+        {communities.map(c => (
+          <>
+            <div
+              key={`multi-community-entry-${c.community.id}`}
+              className="row"
+            >
+              <div className="col-12">
+                <CommunityLink
+                  community={c.community}
+                  myUserInfo={myUserInfo}
+                  muted={false}
+                />
+                {isCreator && onDelete && (
+                  <button
+                    className="btn btn-sm btn-link"
+                    onClick={() => onDelete?.(c.community.id)}
+                  >
+                    <Icon icon={"x"} classes="icon-inline text-danger" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        ))}
+      </div>
+    )
+  );
+}

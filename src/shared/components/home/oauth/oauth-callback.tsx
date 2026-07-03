@@ -1,5 +1,5 @@
 import { setIsoData, updateMyUserInfo } from "@utils/app";
-import { Component } from "inferno";
+import { Component, FormEvent } from "inferno";
 import { refreshTheme } from "@utils/browser";
 import { GetSiteResponse, LoginResponse } from "lemmy-js-client";
 import { Spinner } from "../../common/icon";
@@ -7,11 +7,18 @@ import { getQueryParams } from "@utils/helpers";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { RouteData } from "@utils/types";
 import { I18NextService, UserService } from "../../../services";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps } from "inferno-router";
 import { UnreadCounterService } from "../../../services";
 import { HttpService } from "../../../services/HttpService";
 import { toast } from "@utils/app";
+import { Action } from "history";
+import { handleLoginWithProvider, LocalOauthState } from "./oauth-login";
 import { NoOptionI18nKeys } from "i18next";
+import { RegistrationApplicationInput } from "../authenticate/registration-application-input";
+import { validActorRegexPattern } from "@utils/config";
+import { signupTitleName } from "../authenticate/signup";
+import { RegistrationLegalInfo } from "../authenticate/registration-legal-info";
+import { RegistrationCheckboxes } from "../authenticate/registration-checkboxes";
 
 interface OAuthCallbackProps {
   code?: string;
@@ -40,24 +47,32 @@ export type OAuthCallbackConfig = IRoutePropsWithFetch<
 
 interface State {
   siteRes: GetSiteResponse;
+  username_required: boolean;
+  username?: string;
+  answer?: string;
+  show_nsfw: boolean;
+  stay_logged_in: boolean;
 }
 
 export class OAuthCallback extends Component<OAuthCallbackRouteProps, State> {
-  isoData = setIsoData(this.context);
+  public isoData = setIsoData(this.context);
 
   state: State = {
     siteRes: this.isoData.siteRes,
+    username_required: false,
+    show_nsfw: false,
+    stay_logged_in: false,
   };
 
-  constructor(props: any, context: any) {
-    super(props, context);
+  async componentDidMount() {
+    await this.doLogin();
   }
 
-  async componentDidMount() {
-    // store state in local storage
+  async doLogin() {
+    // restore state from local storage
     const local_oauth_state = JSON.parse(
       localStorage.getItem("oauth_state") || "{}",
-    );
+    ) as LocalOauthState;
     if (
       !(
         this.props.state &&
@@ -78,6 +93,7 @@ export class OAuthCallback extends Component<OAuthCallbackRouteProps, State> {
         oauth_provider_id: local_oauth_state.oauth_provider_id,
         redirect_uri: local_oauth_state.redirect_uri,
         show_nsfw: local_oauth_state.show_nsfw,
+        stay_logged_in: local_oauth_state.stay_logged_in,
         username: local_oauth_state.username,
         answer: local_oauth_state.answer,
       });
@@ -85,7 +101,7 @@ export class OAuthCallback extends Component<OAuthCallbackRouteProps, State> {
       switch (loginRes.state) {
         case "success": {
           if (loginRes.data.jwt) {
-            handleOAuthLoginSuccess(
+            await handleOAuthLoginSuccess(
               this,
               local_oauth_state.prev,
               loginRes.data,
@@ -102,33 +118,17 @@ export class OAuthCallback extends Component<OAuthCallbackRouteProps, State> {
           break;
         }
         case "failed": {
-          let err_redirect = "/login";
-          switch (loginRes.err.message) {
-            case "registration_username_required":
+          const err_redirect = "/login";
+          switch (loginRes.err.name) {
             case "registration_application_answer_required":
-              err_redirect = `/signup?sso_provider_id=${local_oauth_state.oauth_provider_id}`;
-              toast(
-                I18NextService.i18n.t(loginRes.err.message as NoOptionI18nKeys),
-                "danger",
-              );
-              break;
-            case "registration_application_is_pending":
-              toast(
-                I18NextService.i18n.t("registration_application_pending"),
-                "danger",
-              );
-              break;
-            case "registration_denied":
-            case "oauth_authorization_invalid":
-            case "oauth_login_failed":
-            case "oauth_registration_closed":
-            case "email_already_exists":
-            case "username_already_exists":
-            case "no_email_setup":
-              toast(I18NextService.i18n.t(loginRes.err.message), "danger");
-              break;
+            case "registration_username_required":
+              this.setState({ username_required: true });
+              return;
             default:
-              toast(I18NextService.i18n.t("incorrect_login"), "danger");
+              toast(
+                I18NextService.i18n.t(loginRes.err.name as NoOptionI18nKeys),
+                "danger",
+              );
               break;
           }
           this.props.history.push(err_redirect);
@@ -136,7 +136,6 @@ export class OAuthCallback extends Component<OAuthCallbackRouteProps, State> {
       }
     }
   }
-
   get documentTitle(): string {
     return `${I18NextService.i18n.t("login")} - ${
       this.state.siteRes.site_view.site.name
@@ -144,9 +143,55 @@ export class OAuthCallback extends Component<OAuthCallbackRouteProps, State> {
   }
 
   render() {
+    const siteView = this.state.siteRes.site_view;
     return (
       <div className="container-lg">
-        <Spinner />
+        {this.state.username_required ? (
+          <form onSubmit={_e => handleSubmit(this)}>
+            <h1 className="h4 mb-4">{signupTitleName(siteView)}</h1>
+            <div className="mb-3 row">
+              <label className="col-sm-2 col-form-label" htmlFor="username">
+                {I18NextService.i18n.t("username")}
+              </label>
+              <div className="col-sm-10">
+                <input
+                  id="username"
+                  type="text"
+                  className="form-control"
+                  onInput={e => handleUsernameChange(this, e)}
+                  required
+                  minLength={3}
+                  pattern={validActorRegexPattern}
+                  title={I18NextService.i18n.t("community_reqs")}
+                ></input>
+              </div>
+              <RegistrationApplicationInput
+                getSiteRes={this.isoData.siteRes}
+                onAnswerChange={answer => handleAnswerChange(this, answer)}
+              />
+              <RegistrationLegalInfo siteView={siteView} />
+              <RegistrationCheckboxes
+                form={this.state}
+                onRegisterShowNsfwChange={e =>
+                  handleRegisterShowNsfwChange(this, e)
+                }
+                onStayLoggedInChange={e => handleStayLoggedInChange(this, e)}
+              />
+              <div className="mb-3 row">
+                <div className="col-sm-10">
+                  <button
+                    type="submit"
+                    className="btn btn-light border-light-subtle"
+                  >
+                    {I18NextService.i18n.t("submit")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <Spinner />
+        )}
       </div>
     );
   }
@@ -172,11 +217,63 @@ async function handleOAuthLoginSuccess(
 
   if (prev) {
     i.props.history.replace(prev);
-  } else if (i.props.history.action === "PUSH") {
+  } else if (i.props.history.action === Action.Push) {
     i.props.history.back();
   } else {
     i.props.history.replace("/");
   }
 
-  UnreadCounterService.Instance.updateAll();
+  await UnreadCounterService.Instance.updateUnreadCounts();
+}
+
+function handleUsernameChange(
+  i: OAuthCallback,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState({
+    username: event.target.value,
+  });
+}
+
+function handleAnswerChange(i: OAuthCallback, answer: string) {
+  i.setState({
+    answer,
+  });
+}
+
+function handleRegisterShowNsfwChange(i: OAuthCallback, show_nsfw: boolean) {
+  i.setState({
+    show_nsfw,
+  });
+}
+
+function handleStayLoggedInChange(i: OAuthCallback, stay_logged_in: boolean) {
+  i.setState({
+    stay_logged_in,
+  });
+}
+
+function handleSubmit(i: OAuthCallback) {
+  i.setState({
+    username_required: false,
+  });
+  const local_oauth_state = JSON.parse(
+    localStorage.getItem("oauth_state") || "{ }",
+  ) as LocalOauthState;
+
+  const provider = i.isoData.siteRes.oauth_providers.find(
+    p => p.id === local_oauth_state.oauth_provider_id,
+  );
+  if (provider) {
+    handleLoginWithProvider(
+      provider,
+      i.state.username,
+      decodeURIComponent(local_oauth_state.redirect_uri),
+      i.state.answer,
+      i.state.show_nsfw,
+      i.state.stay_logged_in,
+    );
+  } else {
+    i.props.history.push("/login");
+  }
 }

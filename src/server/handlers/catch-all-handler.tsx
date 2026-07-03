@@ -1,9 +1,13 @@
 import { isAuthPath } from "@utils/app";
-import { getHttpBaseInternal } from "@utils/env";
+import {
+  getBackendHostExternal,
+  getBaseUrl,
+  getHttpBaseInternal,
+} from "@utils/env";
 import { ErrorPageData, IsoDataOptionalSite } from "@utils/types";
 import type { Request, Response } from "express";
 import { StaticRouter, matchPath } from "inferno-router";
-import { Match } from "inferno-router/dist/Route";
+import { Match } from "inferno-router";
 import { renderToString } from "inferno-server";
 import {
   GetSiteResponse,
@@ -24,14 +28,18 @@ import { setForwardedHeaders } from "../utils/set-forwarded-headers";
 import { getJwtCookie } from "../utils/has-jwt-cookie";
 import { parsePath } from "history";
 import { getQueryString } from "@utils/helpers";
-import { adultConsentCookieKey, testHost } from "@utils/config";
+import { adultConsentCookieKey } from "@utils/config";
 import { loadLanguageInstances } from "@services/I18NextService";
+
+const specifiedFrontend = process.env.LEMMY_UI_FRONTEND
+  ? getBaseUrl(process.env.LEMMY_UI_FRONTEND)
+  : undefined;
 
 export default async (req: Request, res: Response) => {
   try {
     const languages = headerLanguages(req.headers["accept-language"]);
 
-    let match: Match<any> | null | undefined;
+    let match: Match<Record<string, string>> | null | undefined;
     const activeRoute = routes.find(
       route => (match = matchPath(req.path, route)),
     );
@@ -95,10 +103,15 @@ export default async (req: Request, res: Response) => {
 
       if (siteRes && activeRoute?.fetchInitialData && match) {
         const { search } = parsePath(url);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const initialFetchReq: InitialFetchRequest<Record<string, any>> = {
           path,
           query:
-            activeRoute.getQueryParams?.(search, siteRes, myUserInfo) ?? {},
+            (activeRoute.getQueryParams?.(
+              search,
+              siteRes,
+              myUserInfo,
+            ) as Record<string, never>) ?? {},
           match,
           site: siteRes,
           myUserInfo,
@@ -140,14 +153,11 @@ export default async (req: Request, res: Response) => {
       myUserInfo,
       routeData,
       errorPageData,
-      lemmyExternalHost:
-        process.env.LEMMY_UI_BACKEND_REMOTE ??
-        process.env.LEMMY_UI_BACKEND_EXTERNAL ??
-        testHost,
+      lemmyBackend: getBackendHostExternal(),
+      lemmyFrontend: specifiedFrontend ?? `${req.protocol}://${req.host}`,
       showAdultConsentModal:
         !!siteRes?.site_view.site.content_warning &&
         !(myUserInfo || req.cookies[adultConsentCookieKey]),
-      forceHttps: process.env.LEMMY_UI_BACKEND_REMOTE !== undefined,
     };
 
     const interfaceLanguage =
@@ -170,7 +180,7 @@ export default async (req: Request, res: Response) => {
       await createSsrHtml(
         root,
         isoData,
-        res.locals.cspNonce,
+        res.locals.cspNonce as string,
         languages,
         interfaceLanguage,
       ),
@@ -180,9 +190,7 @@ export default async (req: Request, res: Response) => {
     console.error(err);
     res.statusCode = 500;
 
-    res.send(
-      process.env.NODE_ENV === "development" ? err.name : "Server error",
-    );
+    res.send(err);
   }
 };
 

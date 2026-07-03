@@ -1,10 +1,11 @@
 import classNames from "classnames";
-import { Component, linkEvent } from "inferno";
+import { Component } from "inferno";
 import {
   Language,
   LocalSite,
   MyUserInfo,
   PersonView,
+  PluginMetadata,
   Site,
 } from "lemmy-js-client";
 import { mdToHtml } from "@utils/markdown";
@@ -20,6 +21,8 @@ import {
   CreateMultiCommunityButton,
   CreatePostButton,
 } from "@components/common/content-actions/create-item-buttons";
+import { Link } from "inferno-router";
+import { amAdmin } from "@utils/roles";
 
 interface SiteSidebarProps {
   site: Site;
@@ -29,6 +32,7 @@ interface SiteSidebarProps {
   myUserInfo: MyUserInfo | undefined;
   allLanguages?: Language[];
   siteLanguages?: number[];
+  activePlugins?: PluginMetadata[];
 }
 
 interface SiteSidebarState {
@@ -40,10 +44,6 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
   state: SiteSidebarState = {
     collapsed: false,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   render() {
     return (
@@ -74,7 +74,7 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
           <button
             type="button"
             className="btn btn-sm"
-            onClick={linkEvent(this, this.handleCollapseSidebar)}
+            onClick={() => this.handleCollapseSidebar(this)}
             aria-label={
               this.state.collapsed
                 ? I18NextService.i18n.t("expand")
@@ -102,36 +102,50 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
   }
 
   siteInfo() {
-    const { site } = this.props;
+    const { site, activePlugins, myUserInfo } = this.props;
 
     return (
       <div>
-        {site.description && <h6>{site.description}</h6>}
-        {site.sidebar && this.siteSidebar(site.sidebar)}
+        {site.summary && <h6>{site.summary}</h6>}
+        {site.sidebar && (
+          <div
+            className="md-div mb-2"
+            dangerouslySetInnerHTML={mdToHtml(site.sidebar, () =>
+              this.forceUpdate(),
+            )}
+          />
+        )}
         <LanguageList
           allLanguages={this.props.allLanguages}
           languageIds={this.props.siteLanguages}
         />
-        <CreatePostButton />
+        <CreatePostButton myUserInfo={myUserInfo} />
         <CreateCommunityButton
           localSite={this.props.localSite}
-          myUserInfo={this.props.myUserInfo}
+          myUserInfo={myUserInfo}
+          blockButton
         />
-        <CreateMultiCommunityButton myUserInfo={this.props.myUserInfo} />
+        <CreateMultiCommunityButton myUserInfo={myUserInfo} blockButton />
+        <Link
+          className="btn btn-light border-light-subtle d-block mb-2 w-100"
+          to="/modlog"
+        >
+          {I18NextService.i18n.t("modlog")}
+        </Link>
+        {amAdmin(myUserInfo) && (
+          <Link
+            className="btn btn-light border-light-subtle d-block mb-2 w-100"
+            to="/admin"
+          >
+            {I18NextService.i18n.t("settings")}
+          </Link>
+        )}
         {this.props.localSite && (
           <LocalSiteBadges localSite={this.props.localSite} />
         )}
         {this.props.admins && this.admins(this.props.admins)}
+        {activePlugins && this.plugins(activePlugins)}
       </div>
-    );
-  }
-
-  siteSidebar(sidebar: string) {
-    return (
-      <div
-        className="md-div mb-2"
-        dangerouslySetInnerHTML={mdToHtml(sidebar, () => this.forceUpdate())}
-      />
     );
   }
 
@@ -145,10 +159,30 @@ export class SiteSidebar extends Component<SiteSidebarProps, SiteSidebarState> {
               person={av.person}
               banned={av.banned}
               myUserInfo={this.props.myUserInfo}
+              muted={false}
             />
           </li>
         ))}
       </ul>
+    );
+  }
+
+  plugins(plugins: PluginMetadata[]) {
+    return (
+      plugins.length > 0 && (
+        <ul className="mt-1 list-inline small mb-0">
+          <li className="list-inline-item">
+            {I18NextService.i18n.t("active_plugins")}:
+          </li>
+          {plugins.map(p => (
+            <li className="list-inline-item">
+              <a href={p.url} data-tippy-content={p.description}>
+                {p.name}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )
     );
   }
 

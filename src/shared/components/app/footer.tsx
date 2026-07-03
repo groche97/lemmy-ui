@@ -4,16 +4,13 @@ import { GetSiteResponse } from "lemmy-js-client";
 import { docsUrl, joinLemmyUrl, repoUrl } from "@utils/config";
 import { I18NextService } from "../../services";
 import { VERSION } from "../../version";
+import { hostname } from "@utils/helpers";
 
 interface FooterProps {
   site?: GetSiteResponse;
 }
 
-export class Footer extends Component<FooterProps, any> {
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
+export class Footer extends Component<FooterProps, never> {
   render() {
     return (
       <footer className="app-footer container-lg navbar navbar-expand-md navbar-light navbar-bg p-3">
@@ -58,7 +55,7 @@ export class Footer extends Component<FooterProps, any> {
             </li>
             <li className="nav-item">
               <a className="nav-link" href={joinLemmyUrl}>
-                {new URL(joinLemmyUrl).hostname}
+                {hostname(joinLemmyUrl)}
               </a>
             </li>
           </ul>

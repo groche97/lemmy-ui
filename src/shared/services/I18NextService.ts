@@ -82,10 +82,13 @@ export const allLanguages: TranslationDesc[] = [
 
 type FoundTranslation = [TranslationDesc] | [TranslationDesc, TranslationDesc];
 
-const languageByCode = allLanguages.reduce((acc, l) => {
-  acc[l.code] = l;
-  return acc;
-}, {});
+const languageByCode: Record<string, TranslationDesc> = allLanguages.reduce(
+  (acc, l) => {
+    acc[l.code] = l;
+    return acc;
+  },
+  {},
+);
 
 // Use pt-BR for users with removed interface language pt_BR.
 languageByCode["pt_BR"] = languageByCode["pt-BR"];
@@ -97,7 +100,7 @@ async function loadTranslation(
   return import(
     /* webpackChunkName: `translation-[request]`  */
     `../translations/${resource}`
-  ).then(x => x[resource]);
+  ).then((x: object) => x[resource] as Resource);
 }
 
 export async function verifyTranslationImports(): Promise<ImportReport> {
@@ -108,10 +111,10 @@ export async function verifyTranslationImports(): Promise<ImportReport> {
         if (x && x["translation"]) {
           report.success.push(lang.code);
         } else {
-          throw "unexpected format";
+          throw new Error("unexpected format");
         }
       })
-      .catch(err => report.error.push({ id: lang.code, error: err })),
+      .catch(err => report.error.push({ id: lang.code, error: err as Error })),
   );
   await Promise.all(promises);
   return report;
@@ -140,7 +143,7 @@ async function loadLocale(locale: TranslationDesc): Promise<Locale> {
   return import(
     /* webpackChunkName: `date-fns-[request]` */
     `date-fns/locale/${locale.datefns_resource ?? locale.resource}.js`
-  ).then(x => x.default);
+  ).then((x: { default: Locale }) => x.default);
 }
 
 export async function verifyDateFnsImports(): Promise<ImportReport> {
@@ -151,10 +154,12 @@ export async function verifyDateFnsImports(): Promise<ImportReport> {
         if (x && x.code === (locale.datefns_resource ?? locale.resource)) {
           report.success.push(locale.code);
         } else {
-          throw "unexpected format";
+          throw new Error("unexpected format");
         }
       })
-      .catch(err => report.error.push({ id: locale.code, error: err })),
+      .catch(err =>
+        report.error.push({ id: locale.code, error: err as Error }),
+      ),
   );
   await Promise.all(promises);
   return report;
@@ -218,7 +223,7 @@ export async function loadLanguageInstances(
     saveMissingTo: "all",
   };
   const i18n = i18next.createInstance(options);
-  i18n.init();
+  await i18n.init();
   i18n.on("missingKey", missingKeyHandler); // called on first use of missing key
 
   await Promise.all(
@@ -229,7 +234,7 @@ export async function loadLanguageInstances(
         i18n.addResourceBundle(t.code, "translation", data["translation"]);
       }),
   );
-  await new Promise(r => i18n.changeLanguage(translationDescs[0].code, r));
+  await i18n.changeLanguage(translationDescs[0].code);
 
   return [await localePromise, i18n];
 }
@@ -251,7 +256,7 @@ export async function updateLanguageInstances(
         i18n.addResourceBundle(t.code, "translation", data["translation"]);
       }),
   );
-  await new Promise(r => i18n.changeLanguage(translationDescs[0].code, r));
+  await i18n.changeLanguage(translationDescs[0].code);
   setDefaultOptions({ locale: await locale });
 }
 
@@ -259,15 +264,11 @@ export async function updateLanguageInstances(
  * i18next *
  ***********/
 
-export function format(value: any, format: any): any {
+export function format(value: string, format: string): string {
   return format === "uppercase" ? value.toUpperCase() : value;
 }
 
-function missingKeyHandler(
-  _: readonly string[],
-  __: string,
-  key: string,
-): void {
+function missingKeyHandler(_: readonly string[], __: string, key: string) {
   const msg = `Missing i18n key: ${key}`;
   toast(`${msg}`, "info");
   let stack = new Error().stack?.split("\n") ?? [];
@@ -293,7 +294,9 @@ export class I18NextService {
   public static set i18n(i18n: typeof i18next) {
     if (isBrowser() && this.#Instance.#i18n && this.#Instance.#i18n !== i18n) {
       // In SSR this is ok, because it only ever renders once.
-      throw "<Provider /> doesn't support switching between i18next instances";
+      throw new Error(
+        "<Provider /> doesn't support switching between i18next instances",
+      );
     }
     this.#Instance.#i18n = i18n;
   }

@@ -1,32 +1,32 @@
-import { capitalizeFirstLetter, randomStr } from "@utils/helpers";
-import { Component, linkEvent } from "inferno";
+import { capitalizeFirstLetter } from "@utils/helpers";
+import { Component, FormEvent } from "inferno";
 import { Prompt } from "inferno-router";
 import {
   CreateMultiCommunity,
   MultiCommunityView,
   MyUserInfo,
-  UpdateMultiCommunity,
+  EditMultiCommunity,
 } from "lemmy-js-client";
 import { I18NextService } from "../../services";
 import { Icon, Spinner } from "../common/icon";
-import { MarkdownTextArea } from "../common/markdown-textarea";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import { validActorRegexPattern } from "@utils/config";
 
 interface Props {
   multiCommunityView?: MultiCommunityView; // If a multi-community is given, that means this is an edit
-  onCancel?(): any;
-  onCreate?(form: CreateMultiCommunity): void;
-  onEdit?(form: UpdateMultiCommunity): void;
-  loading?: boolean;
+  createOrEditLoading?: boolean;
+  deleteLoading?: boolean;
   myUserInfo: MyUserInfo | undefined;
+  onCreate?: (form: CreateMultiCommunity) => void;
+  onEdit?: (form: EditMultiCommunity) => void;
+  onDelete?: (deleted: boolean) => void;
 }
 
 interface State {
   form: {
     name?: string;
     title?: string;
-    description?: string;
+    summary?: string;
     deleted?: boolean;
   };
   submitted: boolean;
@@ -34,18 +34,10 @@ interface State {
 
 @tippyMixin
 export class MultiCommunityForm extends Component<Props, State> {
-  private id = `multi-community-form-${randomStr()}`;
-
   state: State = {
     form: this.initForm(),
     submitted: false,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-
-    this.handleDescriptionChange = this.handleDescriptionChange.bind(this);
-  }
 
   initForm() {
     const mv = this.props.multiCommunityView;
@@ -53,31 +45,30 @@ export class MultiCommunityForm extends Component<Props, State> {
       ? {
           name: mv.multi.name,
           title: mv.multi.title,
-          description: mv.multi.description,
+          summary: mv.multi.summary,
           deleted: mv.multi.deleted,
         }
       : {};
   }
 
   render() {
+    const mv = this.props.multiCommunityView;
+
     return (
       <form
         className="multi-community-form"
-        onSubmit={linkEvent(this, this.handleSubmit)}
+        onSubmit={e => handleSubmit(this, e)}
       >
         <Prompt
           message={I18NextService.i18n.t("block_leaving")}
           when={
-            !this.props.loading &&
-            !!(
-              this.state.form.name ||
-              this.state.form.title ||
-              this.state.form.description
-            ) &&
+            !mv &&
+            (!this.props.createOrEditLoading || !this.props.deleteLoading) &&
+            !!(this.state.form.name || this.state.form.title) &&
             !this.state.submitted
           }
         />
-        {!this.props.multiCommunityView && (
+        {!mv && (
           <div className="mb-3 row">
             <label
               className="col-12 col-sm-2 col-form-label"
@@ -97,9 +88,9 @@ export class MultiCommunityForm extends Component<Props, State> {
                 id="multi-community-name"
                 className="form-control"
                 value={this.state.form.name}
-                onInput={linkEvent(this, this.handleNameChange)}
+                onInput={e => handleNameChange(this, e)}
                 required
-                minLength={3}
+                minLength={2}
                 pattern={validActorRegexPattern}
                 title={I18NextService.i18n.t("community_reqs")}
               />
@@ -124,54 +115,69 @@ export class MultiCommunityForm extends Component<Props, State> {
               type="text"
               id="multi-community-title"
               value={this.state.form.title}
-              onInput={linkEvent(this, this.handleTitleChange)}
+              onInput={e => handleTitleChange(this, e)}
               className="form-control"
-              required
               minLength={3}
               maxLength={100}
             />
           </div>
-        </div>
-        <div className="mb-3 row">
-          <label className="col-12 col-sm-2 col-form-label" htmlFor={this.id}>
-            {I18NextService.i18n.t("description")}
+          <label
+            className="col-12 col-sm-2 col-form-label"
+            htmlFor="multi-community-summary"
+          >
+            {I18NextService.i18n.t("summary")}
           </label>
           <div className="col-12 col-sm-10">
-            <MarkdownTextArea
-              initialContent={this.state.form.description}
-              placeholder={I18NextService.i18n.t("description") ?? undefined}
-              onContentChange={this.handleDescriptionChange}
-              hideNavigationWarnings
-              allLanguages={[]}
-              siteLanguages={[]}
-              myUserInfo={this.props.myUserInfo}
+            <input
+              type="text"
+              id="multi-community-summary"
+              value={this.state.form.summary}
+              onInput={e => handleSummaryChange(this, e)}
+              className="form-control"
+              maxLength={150}
             />
           </div>
         </div>
-        {/* TODO add a delete /restore button for the creator */}
-
         <div className="mb-3 row">
           <div className="col-12">
             <button
               type="submit"
-              className="btn btn-secondary me-2"
-              disabled={this.props.loading}
+              className="btn btn-light border-light-subtle me-2"
+              disabled={this.props.createOrEditLoading}
             >
-              {this.props.loading ? (
+              {this.props.createOrEditLoading ? (
                 <Spinner />
-              ) : this.props.multiCommunityView ? (
+              ) : mv ? (
                 capitalizeFirstLetter(I18NextService.i18n.t("save"))
               ) : (
                 capitalizeFirstLetter(I18NextService.i18n.t("create"))
               )}
             </button>
-            {this.props.multiCommunityView && (
+            {mv && (
               <button
                 type="button"
-                className="btn btn-secondary"
-                onClick={linkEvent(this, this.handleCancel)}
+                className={`me-2 btn btn-${
+                  !mv.multi.deleted ? "danger" : "success"
+                }`}
+                onClick={() => handleDelete(this, !mv.multi.deleted)}
+                data-tippy-content={
+                  !mv.multi.deleted
+                    ? I18NextService.i18n.t("delete")
+                    : I18NextService.i18n.t("restore")
+                }
+                aria-label={
+                  !mv.multi.deleted
+                    ? I18NextService.i18n.t("delete")
+                    : I18NextService.i18n.t("restore")
+                }
               >
-                {I18NextService.i18n.t("cancel")}
+                {this.props.deleteLoading ? (
+                  <Spinner />
+                ) : (
+                  I18NextService.i18n.t(
+                    !mv.multi.deleted ? "delete" : "restore",
+                  )
+                )}
               </button>
             )}
           </div>
@@ -179,44 +185,56 @@ export class MultiCommunityForm extends Component<Props, State> {
       </form>
     );
   }
+}
 
-  handleSubmit(i: MultiCommunityForm, event: any) {
-    event.preventDefault();
-    i.setState({ submitted: true });
-    const cForm = i.state.form;
+function handleSubmit(
+  i: MultiCommunityForm,
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+  i.setState({ submitted: true });
+  const cForm = i.state.form;
 
-    const mv = i.props.multiCommunityView;
+  const mv = i.props.multiCommunityView;
 
-    if (mv) {
-      i.props.onEdit?.({
-        id: mv.multi.id,
+  if (mv) {
+    i.props.onEdit?.({
+      id: mv.multi.id,
+      title: cForm.title,
+      summary: cForm.summary,
+    });
+  } else {
+    if (cForm.name) {
+      i.props.onCreate?.({
+        name: cForm.name,
         title: cForm.title,
-        description: cForm.description,
+        summary: cForm.summary,
       });
-    } else {
-      if (cForm.name) {
-        i.props.onCreate?.({
-          name: cForm.name,
-          title: cForm.title,
-          description: cForm.description,
-        });
-      }
     }
   }
+}
 
-  handleNameChange(i: MultiCommunityForm, event: any) {
-    i.setState(s => ((s.form.name = event.target.value), s));
-  }
+function handleNameChange(
+  i: MultiCommunityForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState(s => ((s.form.name = event.target.value), s));
+}
 
-  handleTitleChange(i: MultiCommunityForm, event: any) {
-    i.setState(s => ((s.form.title = event.target.value), s));
-  }
+function handleTitleChange(
+  i: MultiCommunityForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState(s => ((s.form.title = event.target.value), s));
+}
 
-  handleDescriptionChange(val: string) {
-    this.setState(s => ((s.form.description = val), s));
-  }
+function handleSummaryChange(
+  i: MultiCommunityForm,
+  event: FormEvent<HTMLInputElement>,
+) {
+  i.setState(s => ((s.form.summary = event.target.value), s));
+}
 
-  handleCancel(i: MultiCommunityForm) {
-    i.props.onCancel?.();
-  }
+function handleDelete(i: MultiCommunityForm, deleted: boolean) {
+  i.props.onDelete?.(deleted);
 }

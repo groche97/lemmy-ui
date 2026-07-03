@@ -1,22 +1,17 @@
-import { Component, linkEvent } from "inferno";
+import { Component } from "inferno";
 import { I18NextService } from "../../services";
 import { EmojiMart } from "./emoji-mart";
 import { Icon } from "./icon";
 import { tippyMixin } from "../mixins/tippy-mixin";
+import { EmojiEvent } from "@utils/markdown";
 
 interface EmojiPickerProps {
-  onEmojiClick?(val: any): any;
+  onEmojiClick?(event: EmojiEvent);
   disabled?: boolean;
 }
 
 interface EmojiPickerState {
   showPicker: boolean;
-}
-
-function closeEmojiMartOnEsc(i: EmojiPicker, event: KeyboardEvent): void {
-  if (event.key === "Escape") {
-    i.setState({ showPicker: false });
-  }
 }
 
 @tippyMixin
@@ -26,10 +21,9 @@ export class EmojiPicker extends Component<EmojiPickerProps, EmojiPickerState> {
   };
 
   state: EmojiPickerState;
-  constructor(props: EmojiPickerProps, context: any) {
+  constructor(props: EmojiPickerProps, context: object) {
     super(props, context);
     this.state = this.emptyState;
-    this.handleEmojiClick = this.handleEmojiClick.bind(this);
   }
 
   render() {
@@ -40,7 +34,7 @@ export class EmojiPicker extends Component<EmojiPickerProps, EmojiPickerState> {
           data-tippy-content={I18NextService.i18n.t("emoji")}
           aria-label={I18NextService.i18n.t("emoji")}
           disabled={this.props.disabled}
-          onClick={linkEvent(this, this.togglePicker)}
+          onClick={e => this.togglePicker(this, e)}
         >
           <Icon icon="smile" classes="icon-inline" />
         </button>
@@ -50,13 +44,12 @@ export class EmojiPicker extends Component<EmojiPickerProps, EmojiPickerState> {
             <div className="position-relative" role="dialog">
               <div className="emoji-picker-container">
                 <EmojiMart
-                  onEmojiClick={this.handleEmojiClick}
-                  pickerOptions={{}}
+                  onEmojiClick={val => handleEmojiClick(this, val)}
                 ></EmojiMart>
               </div>
               {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events,jsx-a11y/no-static-element-interactions */}
               <div
-                onClick={linkEvent(this, this.togglePicker)}
+                onClick={e => this.togglePicker(this, e)}
                 className="click-away-container"
               />
             </div>
@@ -66,23 +59,29 @@ export class EmojiPicker extends Component<EmojiPickerProps, EmojiPickerState> {
     );
   }
 
+  closeEmojiMartOnEscHandler = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      this.setState({ showPicker: false });
+    }
+  };
+
   componentWillUnmount() {
-    document.removeEventListener("keyup", e => closeEmojiMartOnEsc(this, e));
+    document.removeEventListener("keyup", this.closeEmojiMartOnEscHandler);
   }
 
-  togglePicker(i: EmojiPicker, e: any) {
+  togglePicker(i: EmojiPicker, e: Event) {
     e.preventDefault();
     i.setState({ showPicker: !i.state.showPicker });
 
     if (i.state.showPicker) {
-      document.addEventListener("keyup", e => closeEmojiMartOnEsc(i, e));
+      document.addEventListener("keyup", this.closeEmojiMartOnEscHandler);
     } else {
-      document.removeEventListener("keyup", e => closeEmojiMartOnEsc(i, e));
+      document.removeEventListener("keyup", this.closeEmojiMartOnEscHandler);
     }
   }
+}
 
-  handleEmojiClick(e: any) {
-    this.props.onEmojiClick?.(e);
-    this.setState({ showPicker: false });
-  }
+function handleEmojiClick(i: EmojiPicker, e: EmojiEvent) {
+  i.props.onEmojiClick?.(e);
+  i.setState({ showPicker: false });
 }

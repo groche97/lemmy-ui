@@ -1,13 +1,13 @@
 import { editRegistrationApplication, setIsoData } from "@utils/app";
 import {
-  cursorComponents,
   getQueryParams,
   getQueryString,
   resourcesSettled,
 } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
 import {
-  DirectionalCursor,
+  ItemIdAndRes,
+  itemLoading,
   QueryParams,
   RouteDataResponse,
 } from "@utils/types";
@@ -15,7 +15,10 @@ import { Component } from "inferno";
 import {
   ApproveRegistrationApplication,
   LemmyHttp,
-  ListRegistrationApplicationsResponse,
+  PagedResponse,
+  PaginationCursor,
+  RegistrationApplicationId,
+  RegistrationApplicationResponse,
   RegistrationApplicationView,
 } from "lemmy-js-client";
 import { fetchLimit } from "@utils/config";
@@ -34,26 +37,31 @@ import { RegistrationApplication } from "../common/registration-application";
 import { getHttpBaseInternal } from "../../utils/env";
 import { isBrowser } from "@utils/browser";
 import { PaginatorCursor } from "@components/common/paginator-cursor";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { InfernoNode } from "inferno";
 import {
   RegistrationState,
-  RegistrationStateRadios,
-} from "@components/common/registration-state-radios";
+  RegistrationStateDropdown,
+} from "@components/common/registration-state-dropdown";
+import { removeLocalStorageMarkdown } from "@components/common/markdown-textarea";
 
 type RegistrationApplicationsData = RouteDataResponse<{
-  listRegistrationApplicationsResponse: ListRegistrationApplicationsResponse;
+  listRegistrationApplicationsResponse: PagedResponse<RegistrationApplicationView>;
 }>;
 
 interface RegistrationApplicationsState {
-  appsRes: RequestState<ListRegistrationApplicationsResponse>;
+  appsRes: RequestState<PagedResponse<RegistrationApplicationView>>;
+  approveRes: ItemIdAndRes<
+    RegistrationApplicationId,
+    RegistrationApplicationResponse
+  >;
   isIsomorphic: boolean;
 }
 
 interface RegistrationApplicationsProps {
   view: RegistrationState;
-  cursor?: DirectionalCursor;
+  cursor?: PaginationCursor;
 }
 
 function registrationStateFromQuery(view?: string): RegistrationState {
@@ -98,6 +106,7 @@ export class RegistrationApplications extends Component<
   private isoData = setIsoData<RegistrationApplicationsData>(this.context);
   state: RegistrationApplicationsState = {
     appsRes: EMPTY_REQUEST,
+    approveRes: { id: 0, res: LOADING_REQUEST },
     isIsomorphic: false,
   };
 
@@ -105,13 +114,8 @@ export class RegistrationApplications extends Component<
     return resourcesSettled([this.state.appsRes]);
   }
 
-  constructor(props: any, context: any) {
+  constructor(props: RegistrationApplicationsRouteProps, context: object) {
     super(props, context);
-
-    this.handlePageChange = this.handlePageChange.bind(this);
-    this.handleApproveApplication = this.handleApproveApplication.bind(this);
-    this.handleRegistrationStateChange =
-      this.handleRegistrationStateChange.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -129,14 +133,14 @@ export class RegistrationApplications extends Component<
     }
   }
 
-  componentWillReceiveProps(
+  async componentWillReceiveProps(
     nextProps: RegistrationApplicationsRouteProps & { children?: InfernoNode },
-  ): void {
+  ) {
     if (
       nextProps.view !== this.props.view ||
       nextProps.cursor !== this.props.cursor
     ) {
-      this.refetch(nextProps);
+      await this.refetch(nextProps);
     }
   }
 
@@ -151,16 +155,14 @@ export class RegistrationApplications extends Component<
 
   renderApps() {
     const appsState = this.state.appsRes.state;
-    const apps =
-      appsState === "success" &&
-      this.state.appsRes.data.registration_applications;
+    const apps = appsState === "success" && this.state.appsRes.data.items;
 
     return (
       <div className="row">
         <div className="col-12">
           <HtmlTags
             title={this.documentTitle}
-            path={this.context.router.route.match.url}
+            context={this.context as RouterContext}
           />
           <h1 className="h4 mb-4">
             {I18NextService.i18n.t("registration_applications")}
@@ -172,7 +174,7 @@ export class RegistrationApplications extends Component<
               <PaginatorCursor
                 current={this.props.cursor}
                 resource={this.state.appsRes}
-                onPageChange={this.handlePageChange}
+                onPageChange={cursor => handlePageChange(this, cursor)}
               />
             </>
           ) : (
@@ -199,9 +201,9 @@ export class RegistrationApplications extends Component<
     return (
       <div className="mb-2">
         <span className="me-3">
-          <RegistrationStateRadios
-            state={this.props.view}
-            onClick={this.handleRegistrationStateChange}
+          <RegistrationStateDropdown
+            currentOption={this.props.view}
+            onSelect={val => handleRegistrationStateChange(this, val)}
           />
         </span>
       </div>
@@ -218,9 +220,14 @@ export class RegistrationApplications extends Component<
           <>
             <hr />
             <RegistrationApplication
-              key={ra.registration_application.id}
               application={ra}
-              onApproveApplication={this.handleApproveApplication}
+              onApproveApplication={form =>
+                handleApproveApplication(this, form)
+              }
+              loading={
+                itemLoading(this.state.approveRes) ===
+                ra.registration_application.id
+              }
               myUserInfo={this.isoData.myUserInfo}
             />
           </>
@@ -229,15 +236,7 @@ export class RegistrationApplications extends Component<
     );
   }
 
-  handleRegistrationStateChange(val: RegistrationState) {
-    this.updateUrl({ view: val, cursor: undefined });
-  }
-
-  handlePageChange(cursor?: DirectionalCursor) {
-    this.updateUrl({ cursor });
-  }
-
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
     match: {
       params: { view, cursor },
@@ -245,7 +244,7 @@ export class RegistrationApplications extends Component<
   }: InitialFetchRequest<
     Record<string, never>,
     RegistrationApplicationsProps
-  >): Promise<RegistrationApplicationsData> {
+  >): Promise<RegistrationApplicationsData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -253,12 +252,12 @@ export class RegistrationApplications extends Component<
       listRegistrationApplicationsResponse: headers["Authorization"]
         ? await client.listRegistrationApplications({
             unread_only: view === "unread",
-            ...cursorComponents(cursor),
+            page_cursor: cursor,
             limit: fetchLimit,
           })
         : EMPTY_REQUEST,
     };
-  }
+  };
 
   refetchToken?: symbol;
   async refetch(props: RegistrationApplicationsProps) {
@@ -269,7 +268,7 @@ export class RegistrationApplications extends Component<
     });
     const appsRes = await HttpService.client.listRegistrationApplications({
       unread_only: state === "unread",
-      ...cursorComponents(cursor),
+      page_cursor: cursor,
       limit: fetchLimit,
     });
     if (token === this.refetchToken) {
@@ -277,7 +276,7 @@ export class RegistrationApplications extends Component<
     }
   }
 
-  async updateUrl(props: Partial<RegistrationApplicationsProps>) {
+  updateUrl(props: Partial<RegistrationApplicationsProps>) {
     const { cursor, view: state } = { ...this.props, ...props };
 
     const queryParams: QueryParams<RegistrationApplicationsProps> = {
@@ -289,18 +288,38 @@ export class RegistrationApplications extends Component<
       `/registration_applications${getQueryString(queryParams)}`,
     );
   }
+}
 
-  async handleApproveApplication(form: ApproveRegistrationApplication) {
-    const approveRes =
-      await HttpService.client.approveRegistrationApplication(form);
-    this.setState(s => {
-      if (s.appsRes.state === "success" && approveRes.state === "success") {
-        s.appsRes.data.registration_applications = editRegistrationApplication(
-          approveRes.data.registration_application,
-          s.appsRes.data.registration_applications,
-        );
-      }
-      return s;
-    });
-  }
+function handleRegistrationStateChange(
+  i: RegistrationApplications,
+  val: RegistrationState,
+) {
+  i.updateUrl({ view: val, cursor: undefined });
+}
+
+function handlePageChange(
+  i: RegistrationApplications,
+  cursor?: PaginationCursor,
+) {
+  i.updateUrl({ cursor });
+}
+
+async function handleApproveApplication(
+  i: RegistrationApplications,
+  form: ApproveRegistrationApplication,
+) {
+  i.setState({ approveRes: { id: form.id, res: LOADING_REQUEST } });
+  const res = await HttpService.client.approveRegistrationApplication(form);
+  i.setState({ approveRes: { id: form.id, res } });
+
+  i.setState(s => {
+    if (s.appsRes.state === "success" && res.state === "success") {
+      removeLocalStorageMarkdown();
+      s.appsRes.data.items = editRegistrationApplication(
+        res.data.registration_application,
+        s.appsRes.data.items,
+      );
+    }
+    return s;
+  });
 }

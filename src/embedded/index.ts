@@ -1,4 +1,3 @@
-// @ts-expect-error has a weird import error
 import { lazyLoad } from "unlazy";
 
 // WARNING: This script is written as content into a script tag. A closing

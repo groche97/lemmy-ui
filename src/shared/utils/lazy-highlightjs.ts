@@ -12,7 +12,7 @@ async function lazyLoad(lang: string): Promise<LanguageFn> {
   return import(
     /* webpackChunkName: "hljs-[request]" */
     `highlight.js/lib/languages/${lang}.js`
-  ).then(x => x.default);
+  ).then((x: { default: LanguageFn }) => x.default);
 }
 
 class LazyHighlightjs implements HLJSPlugin {
@@ -34,7 +34,7 @@ class LazyHighlightjs implements HLJSPlugin {
         /* webpackMode: "eager" */
         `highlight.js/lib/languages/${lang}.js`
       )
-        .then(x => {
+        .then((x: { default: LanguageFn }) => {
           hljs.registerLanguage(lang, x.default);
           this.loadedLanguages.add(lang);
         })
@@ -64,7 +64,7 @@ class LazyHighlightjs implements HLJSPlugin {
     readonly pending: Set<string>;
   };
 
-  "before:highlight"(context: { language: string }) {
+  async "before:highlight"(context: { language: string }) {
     const { language: lang } = context;
     if (this.loadedLanguages.has(lang)) return;
     context.language = "plaintext"; // Silences "Could not find language"
@@ -73,7 +73,7 @@ class LazyHighlightjs implements HLJSPlugin {
     }
     if (!this.current) {
       console.warn(`Lazy highlightjs "${lang}" without callback.`);
-      this.loadLanguage(lang);
+      await this.loadLanguage(lang);
       return;
     }
     const { callback, pending } = this.current;
@@ -95,7 +95,7 @@ class LazyHighlightjs implements HLJSPlugin {
     text: string,
     shouldRerender: () => void,
   ): string {
-    if (this.current) throw "no nesting";
+    if (this.current) throw Error("no nesting");
     if (shouldRerender) {
       this.current = { callback: shouldRerender, pending: new Set() };
     }
@@ -135,10 +135,10 @@ export async function verifyHighlighjsImports(): Promise<ImportReport> {
         if (x && x instanceof Function && x(hljs).name) {
           report.success.push(lang);
         } else {
-          throw "unexpected format";
+          throw Error("unexpected format");
         }
       })
-      .catch(err => report.error.push({ id: lang, error: err })),
+      .catch(err => report.error.push({ id: lang, error: err as Error })),
   );
   await Promise.all(promises);
   return report;

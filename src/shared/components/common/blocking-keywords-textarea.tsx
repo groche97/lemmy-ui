@@ -1,20 +1,26 @@
-import { linkEvent, Component } from "inferno";
+import { Component, FocusEvent, FormEvent } from "inferno";
 import { I18NextService } from "../../services/I18NextService";
 
 interface Props {
   keywords: string[];
-  onUpdate(keywords: string[]): void;
+  onUpdate: (keywords: string[]) => void;
 }
 
 interface State {
   text: string;
 }
 
-function handleTextChange(i: BlockingKeywordsTextArea, event: any) {
+function handleTextChange(
+  i: BlockingKeywordsTextArea,
+  event: FormEvent<HTMLTextAreaElement>,
+) {
   i.setState({ text: event.target.value });
 }
 
-function handleTextBlur(i: BlockingKeywordsTextArea, _event: any) {
+function handleTextBlur(
+  i: BlockingKeywordsTextArea,
+  _event: FocusEvent<HTMLTextAreaElement>,
+) {
   const keywords = fromText(i.state.text);
   i.props.onUpdate(keywords);
 }
@@ -50,8 +56,8 @@ export default class BlockingKeywordsTextArea extends Component<Props, State> {
             className="form-control"
             placeholder={I18NextService.i18n.t("keyword_blocks_placeholder")}
             value={this.state.text}
-            onInput={linkEvent(this, handleTextChange)}
-            onBlur={linkEvent(this, handleTextBlur)}
+            onInput={event => handleTextChange(this, event)}
+            onBlur={event => handleTextBlur(this, event)}
             rows={4}
           />
         </div>

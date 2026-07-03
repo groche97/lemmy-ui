@@ -1,33 +1,30 @@
 import { Component, RefObject, createRef } from "inferno";
-import { getEmojiMart } from "@utils/markdown";
+import { EmojiEvent, getEmojiMart } from "@utils/markdown";
 
 interface EmojiMartProps {
-  onEmojiClick?(val: any): any;
-  pickerOptions: any;
+  onEmojiClick?(val: EmojiEvent);
 }
 
 export class EmojiMart extends Component<EmojiMartProps> {
   div: RefObject<HTMLDivElement>;
 
-  constructor(props: any, context: any) {
+  constructor(props: EmojiMartProps, context: object) {
     super(props, context);
 
     this.div = createRef();
-
-    this.handleEmojiClick = this.handleEmojiClick.bind(this);
   }
 
   componentDidMount() {
     this.div.current?.appendChild(
-      getEmojiMart(this.handleEmojiClick, this.props.pickerOptions) as any,
+      getEmojiMart(e => handleEmojiClick(this, e)) as unknown as HTMLElement,
     );
   }
 
   render() {
     return <div id="emoji-picker" ref={this.div} />;
   }
+}
 
-  handleEmojiClick(e: any) {
-    this.props.onEmojiClick?.(e);
-  }
+function handleEmojiClick(i: EmojiMart, e: EmojiEvent) {
+  i.props.onEmojiClick?.(e);
 }

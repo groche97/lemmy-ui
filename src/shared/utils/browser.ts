@@ -7,7 +7,9 @@ export function canShare() {
 }
 
 export function clearAuthCookie() {
-  document.cookie = cookie.serialize(authCookieName, "", {
+  document.cookie = cookie.stringifySetCookie({
+    name: authCookieName,
+    value: "",
     maxAge: -1,
     sameSite: "lax",
     path: "/",
@@ -17,7 +19,8 @@ export function clearAuthCookie() {
 type BsTheme = "dark" | "light";
 
 export function dataBsTheme(theme: string): BsTheme {
-  return (isDark() && theme === "browser") || theme.includes("dark")
+  return (isDark() && theme === "browser") ||
+    theme.toLowerCase().includes("dark")
     ? "dark"
     : "light";
 }
@@ -96,7 +99,9 @@ export function refreshTheme() {
 }
 
 export function setAuthCookie(jwt: string) {
-  document.cookie = cookie.serialize(authCookieName, jwt, {
+  document.cookie = cookie.stringifySetCookie({
+    name: authCookieName,
+    value: jwt,
     maxAge: 365 * 24 * 60 * 60 * 1000,
     secure: isHttps(),
     sameSite: "lax",
@@ -104,7 +109,7 @@ export function setAuthCookie(jwt: string) {
   });
 }
 
-export async function setThemeOverride(theme?: string) {
+export function setThemeOverride(theme?: string) {
   if (!isBrowser()) {
     return;
   }
@@ -113,9 +118,9 @@ export async function setThemeOverride(theme?: string) {
   );
 }
 
-export function share(shareData: ShareData) {
+export async function share(shareData: ShareData) {
   if (isBrowser()) {
-    navigator.share(shareData);
+    await navigator.share(shareData);
   }
 }
 
@@ -124,7 +129,7 @@ export function snapToTop() {
 }
 
 export async function masonryUpdate() {
-  if (isBrowser()) {
+  if (isBrowser() && document.getElementsByClassName("post-listings-grid")) {
     const Masonry = (await import("masonry-layout")).default;
     new Masonry(".post-listings-grid", {
       percentPosition: true,

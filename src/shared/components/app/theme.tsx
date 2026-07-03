@@ -16,7 +16,7 @@ interface State {
 
 export class Theme extends Component<Props, State> {
   private lightQuery?: MediaQueryList;
-  constructor(props: any, context: any) {
+  constructor(props: Props, context: object) {
     super(props, context);
     if (isBrowser()) {
       window.addEventListener("refresh-theme", this.eventListener);
@@ -26,14 +26,16 @@ export class Theme extends Component<Props, State> {
     }
   }
 
-  private graceTimer;
-  private eventListener = e => {
+  private graceTimer: NodeJS.Timeout | undefined;
+  private eventListener = (e: CustomEvent) => {
     if (e.type === "refresh-theme" || e.type === "change") {
       this.forceUpdate();
     } else if (e.type === "set-theme-override") {
-      if (e.detail?.theme) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const theme = e.detail?.theme as string;
+      if (theme) {
         this.setState({
-          themeOverride: e.detail.theme,
+          themeOverride: theme,
           graceTheme: this.state?.themeOverride ?? this.currentTheme(),
         });
         // Keep both themes enabled for one second. Avoids unstyled flashes.
@@ -47,7 +49,7 @@ export class Theme extends Component<Props, State> {
     }
   };
 
-  componentWillUnmount(): void {
+  componentWillUnmount() {
     if (isBrowser()) {
       window.removeEventListener("refresh-theme", this.eventListener);
       this.lightQuery?.removeEventListener("change", this.eventListener);
@@ -76,7 +78,10 @@ export class Theme extends Component<Props, State> {
   }
 
   renderTheme(theme: string) {
-    const hasTheme = theme !== "instance" && theme !== "instance-compact";
+    const hasTheme =
+      theme !== "instance" &&
+      theme !== "instance-compact" &&
+      theme !== "browser";
 
     const detectedBsTheme = {};
     if (this.lightQuery) {
@@ -100,7 +105,8 @@ export class Theme extends Component<Props, State> {
       );
     } else if (
       this.props.defaultTheme !== "instance" &&
-      this.props.defaultTheme !== "instance-compact"
+      this.props.defaultTheme !== "instance-compact" &&
+      this.props.defaultTheme !== "browser"
     ) {
       return (
         <>

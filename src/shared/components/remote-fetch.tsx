@@ -2,8 +2,13 @@ import { setIsoData } from "@utils/app";
 import { getQueryParams, resourcesSettled } from "@utils/helpers";
 import { scrollMixin } from "./mixins/scroll-mixin";
 import { RouteDataResponse } from "@utils/types";
-import { Component, linkEvent } from "inferno";
-import { CommunityView, LemmyHttp, SearchResponse } from "lemmy-js-client";
+import { Component } from "inferno";
+import {
+  CommunityResponse,
+  CommunityView,
+  LemmyHttp,
+  ResolveObjectView,
+} from "lemmy-js-client";
 import { InitialFetchRequest } from "@utils/types";
 import { FirstLoadService, HttpService, I18NextService } from "../services";
 import {
@@ -19,7 +24,7 @@ import { PictrsImage } from "./common/pictrs-image";
 import { SubscribeButton } from "./common/subscribe-button";
 import { CommunityLink } from "./community/community-link";
 import { getHttpBaseInternal } from "../utils/env";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { isBrowser } from "@utils/browser";
 
@@ -28,13 +33,13 @@ interface RemoteFetchProps {
 }
 
 type RemoteFetchData = RouteDataResponse<{
-  resolveObjectRes: SearchResponse;
+  resolveObjectRes: ResolveObjectView;
 }>;
 
 interface RemoteFetchState {
-  resolveObjectRes: RequestState<SearchResponse>;
+  resolveObjectRes: RequestState<ResolveObjectView>;
+  followRes: RequestState<CommunityResponse>;
   isIsomorphic: boolean;
-  followCommunityLoading: boolean;
 }
 
 const getUriFromQuery = (uri?: string): string | undefined => uri;
@@ -57,31 +62,26 @@ function uriToQuery(uri: string) {
 async function handleToggleFollow(i: RemoteFetch, follow: boolean) {
   const { community } = i;
   if (community) {
-    i.setState({
-      followCommunityLoading: true,
-    });
+    i.setState({ followRes: LOADING_REQUEST });
 
-    const communityRes = await HttpService.client.followCommunity({
+    const followRes = await HttpService.client.followCommunity({
       community_id: community.community.id,
       follow,
     });
+    i.setState({ followRes });
 
     i.setState(prev => {
-      if (communityRes.state === "success") {
+      if (followRes.state === "success") {
         community.community_actions =
-          communityRes.data.community_view.community_actions;
+          followRes.data.community_view.community_actions;
       }
 
       return {
         ...prev,
-        followCommunityLoading: false,
       };
     });
   }
 }
-
-const handleFollow = (i: RemoteFetch) => handleToggleFollow(i, true);
-const handleUnfollow = (i: RemoteFetch) => handleToggleFollow(i, false);
 
 type RemoteFetchPathProps = Record<string, never>;
 type RemoteFetchRouteProps = RouteComponentProps<RemoteFetchPathProps> &
@@ -100,15 +100,15 @@ export class RemoteFetch extends Component<
   private isoData = setIsoData<RemoteFetchData>(this.context);
   state: RemoteFetchState = {
     resolveObjectRes: EMPTY_REQUEST,
+    followRes: EMPTY_REQUEST,
     isIsomorphic: false,
-    followCommunityLoading: false,
   };
 
   loadingSettled() {
     return resourcesSettled([this.state.resolveObjectRes]);
   }
 
-  constructor(props: RemoteFetchRouteProps, context: any) {
+  constructor(props: RemoteFetchRouteProps, context: object) {
     super(props, context);
 
     if (FirstLoadService.isFirstLoad) {
@@ -142,7 +142,7 @@ export class RemoteFetch extends Component<
       <div className="remote-fetch container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         <div className="row">
           <div className="col-12 col-lg-6 offset-lg-3 text-center">
@@ -155,9 +155,11 @@ export class RemoteFetch extends Component<
 
   get community(): CommunityView | undefined {
     const { resolveObjectRes: res } = this.state;
-    return res.state === "success"
-      ? res.data.results.find(x => x.type_ === "community")
-      : undefined;
+    if (res.state === "success" && res.data.type_ === "community") {
+      return res.data;
+    } else {
+      return undefined;
+    }
   }
 
   get content() {
@@ -187,26 +189,30 @@ export class RemoteFetch extends Component<
             <h1>{I18NextService.i18n.t("community_federated")}</h1>
             <div className="card mt-5">
               {communityView.community.banner && (
-                <PictrsImage src={communityView.community.banner} cardTop />
+                <PictrsImage
+                  src={communityView.community.banner}
+                  type="card_top"
+                />
               )}
               <div className="card-body">
                 <h2 className="card-title">
                   <CommunityLink
                     community={communityView.community}
                     myUserInfo={this.isoData.myUserInfo}
+                    muted={false}
                   />
                 </h2>
-                {communityView.community.description && (
+                {communityView.community.sidebar && (
                   <div className="card-text mb-3 preview-lines">
-                    {communityView.community.description}
+                    {communityView.community.sidebar}
                   </div>
                 )}
                 <SubscribeButton
                   followState={communityView.community_actions?.follow_state}
                   apId={communityView.community.ap_id}
-                  onFollow={linkEvent(this, handleFollow)}
-                  onUnFollow={linkEvent(this, handleUnfollow)}
-                  loading={this.state.followCommunityLoading}
+                  onFollow={() => handleToggleFollow(this, true)}
+                  onUnFollow={() => handleToggleFollow(this, false)}
+                  loading={this.state.followRes.state === "loading"}
                   showRemoteFetch={!this.isoData.myUserInfo}
                 />
               </div>
@@ -253,13 +259,13 @@ export class RemoteFetch extends Component<
     }${name}`;
   }
 
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
     query: { uri },
   }: InitialFetchRequest<
     RemoteFetchPathProps,
     RemoteFetchProps
-  >): Promise<RemoteFetchData> {
+  >): Promise<RemoteFetchData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -272,5 +278,5 @@ export class RemoteFetch extends Component<
     }
 
     return data;
-  }
+  };
 }

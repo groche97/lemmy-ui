@@ -1,14 +1,24 @@
 import PostActionDropdown from "@components/common/content-actions/post-action-dropdown";
-import { Icon } from "@components/common/icon";
+import { Icon, Spinner } from "@components/common/icon";
 import { BanUpdateForm } from "@components/common/modal/mod-action-form-modal";
 import { VoteButtonsCompact } from "@components/common/vote-buttons";
 import { I18NextService } from "@services/index";
-import { postIsInteractable, userNotLoggedInOrBanned } from "@utils/app";
+import {
+  postIsInteractable,
+  setIsoData,
+  userNotLoggedInOrBanned,
+} from "@utils/app";
 import { share } from "@utils/browser";
 import { futureDaysToUnixTime } from "@utils/date";
-import { getHttpBase } from "@utils/env";
+import { httpFrontendUrl } from "@utils/env";
 import { unreadCommentsCount } from "@utils/helpers";
-import { CrossPostParams, ShowBodyType } from "@utils/types";
+import {
+  CrossPostParams,
+  IsoDataOptionalSite,
+  ShowBodyType,
+  ShowMarkReadType,
+} from "@utils/types";
+import classNames from "classnames";
 import { Link } from "inferno-router";
 import {
   PostView,
@@ -35,43 +45,47 @@ import {
   RemovePost,
   SavePost,
   TransferCommunity,
+  CreatePostWarning,
 } from "lemmy-js-client";
 
 type PostActionBarProps = {
   postView: PostView;
   admins: PersonView[];
   showBody: ShowBodyType;
-  markable: boolean;
+  showMarkRead: ShowMarkReadType;
   viewOnly: boolean;
   viewSource: boolean;
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
-  onPostVote(form: CreatePostLike): void;
-  onScrollIntoCommentsClick(e: MouseEvent): void;
-  onViewSource(): void;
-  onMarkPostAsRead(form: MarkPostAsRead): void;
-  onEditClick(): void;
-  onPostVote(form: CreatePostLike): void;
-  onPostReport(form: CreatePostReport): void;
-  onBlockPerson(form: BlockPerson): void;
-  onBlockCommunity(form: BlockCommunity): void;
-  onLockPost(form: LockPost): void;
-  onDeletePost(form: DeletePost): void;
-  onRemovePost(form: RemovePost): void;
-  onSavePost(form: SavePost): void;
-  onFeaturePost(form: FeaturePost): void;
-  onPurgePerson(form: PurgePerson): void;
-  onPurgePost(form: PurgePost): void;
-  onBanPersonFromCommunity(form: BanFromCommunity): void;
-  onBanPerson(form: BanPerson): void;
-  onAddModToCommunity(form: AddModToCommunity): void;
-  onAddAdmin(form: AddAdmin): void;
-  onTransferCommunity(form: TransferCommunity): void;
-  onHidePost(form: HidePost): void;
-  onPersonNote(form: NotePerson): void;
+  notificationRead?: boolean;
+  markReadLoading: boolean;
+  voteLoading: boolean;
+  onPostVote: (form: CreatePostLike) => void;
+  onScrollIntoCommentsClick: (e: MouseEvent) => void;
+  onViewSource: () => void;
+  onMarkPostAsRead: (form: MarkPostAsRead) => void;
+  onEditClick: () => void;
+  onPostReport: (form: CreatePostReport) => void;
+  onBlockPerson: (form: BlockPerson) => void;
+  onBlockCommunity: (form: BlockCommunity) => void;
+  onLockPost: (form: LockPost) => void;
+  onWarnPost: (form: CreatePostWarning) => void;
+  onDeletePost: (form: DeletePost) => void;
+  onRemovePost: (form: RemovePost) => void;
+  onSavePost: (form: SavePost) => void;
+  onFeaturePost: (form: FeaturePost) => void;
+  onPurgePerson: (form: PurgePerson) => void;
+  onPurgePost: (form: PurgePost) => void;
+  onBanPersonFromCommunity: (form: BanFromCommunity) => void;
+  onBanPerson: (form: BanPerson) => void;
+  onAddModToCommunity: (form: AddModToCommunity) => void;
+  onAddAdmin: (form: AddAdmin) => void;
+  onTransferCommunity: (form: TransferCommunity) => void;
+  onHidePost: (form: HidePost) => void;
+  onPersonNote: (form: NotePerson) => void;
 };
 
-export function PostActionBar(props: PostActionBarProps) {
+export function PostActionBar(props: PostActionBarProps, context: object) {
   const {
     postView,
     admins,
@@ -82,21 +96,35 @@ export function PostActionBar(props: PostActionBarProps) {
     viewSource,
     myUserInfo,
     localSite,
-    markable,
+    showMarkRead,
+    notificationRead,
+    onMarkPostAsRead,
+    markReadLoading,
+    voteLoading,
   } = props;
   const { id } = postView.post;
 
   return (
-    <div className="row">
-      <div className="col flex-grow-1 text-muted">
+    <div className="row row-cols-auto align-items-center g-3 justify-content-end justify-content-md-start">
+      {showMarkRead === "main_bar" && (
+        <div className="col">
+          <PostMarkReadButton
+            post={postView.post}
+            read={notificationRead ?? false}
+            loading={markReadLoading}
+            onMarkRead={form => onMarkPostAsRead(form)}
+          />
+        </div>
+      )}
+      <div className="col text-muted">
         <CommentsButton
           postView={postView}
           type_="icon"
           onScrollIntoCommentsClick={onScrollIntoCommentsClick}
         />
       </div>
-      <div className="col-auto d-flex">
-        {postIsInteractable(postView, viewOnly) && (
+      {postIsInteractable(postView, viewOnly) && (
+        <div className="col">
           <VoteButtonsCompact
             voteContentType={"post"}
             id={id}
@@ -106,9 +134,11 @@ export function PostActionBar(props: PostActionBarProps) {
             myUserInfo={myUserInfo}
             localSite={localSite}
             disabled={userNotLoggedInOrBanned(myUserInfo)}
+            loading={voteLoading}
           />
-        )}
-
+        </div>
+      )}
+      <div className="col">
         <PostActionDropdown
           postView={postView}
           community={postView.community}
@@ -118,7 +148,7 @@ export function PostActionBar(props: PostActionBarProps) {
           viewSource={viewSource}
           showBody={showBody}
           viewOnly={viewOnly}
-          markable={markable}
+          showMarkRead={showMarkRead}
           onSave={() => handleSavePost(props)}
           onReport={reason => handleReport(props, reason)}
           onBlockPerson={() => handleBlockPerson(props)}
@@ -126,6 +156,7 @@ export function PostActionBar(props: PostActionBarProps) {
           onEdit={props.onEditClick}
           onDelete={() => handleDeletePost(props)}
           onLock={reason => handleModLock(props, reason)}
+          onWarn={reason => handleWarnPost(props, reason)}
           onFeatureCommunity={() => handleModFeaturePostCommunity(props)}
           onFeatureLocal={() => handleModFeaturePostLocal(props)}
           onRemove={reason => handleRemove(props, reason)}
@@ -139,7 +170,9 @@ export function PostActionBar(props: PostActionBarProps) {
           onHidePost={() => handleHidePost(props)}
           onPersonNote={props.onPersonNote}
           onViewSource={props.onViewSource}
-          onSharePost={() => handleShare(props.postView.post)}
+          onSharePost={() =>
+            handleShare(props.postView.post, setIsoData(context))
+          }
           onMarkPostAsRead={() => handleMarkPostAsRead(props)}
         />
       </div>
@@ -151,7 +184,7 @@ type CommentsButtonTextOrIcon = "text" | "icon";
 type CommentsButtonProps = {
   postView: PostView;
   type_: CommentsButtonTextOrIcon;
-  onScrollIntoCommentsClick(e: MouseEvent): void;
+  onScrollIntoCommentsClick: (e: MouseEvent) => void;
 };
 export function CommentsButton({
   postView,
@@ -168,7 +201,10 @@ export function CommentsButton({
 
   return (
     <Link
-      className="btn btn-sm btn-link text-muted ps-0 py-0"
+      className={classNames("btn btn-sm text-muted", {
+        "border-light-subtle": type_ === "icon",
+        "btn-link ps-0 py-0": type_ === "text",
+      })}
       title={title}
       to={`/post/${postView.post.id}?scrollToComments=true`}
       data-tippy-content={title}
@@ -186,6 +222,42 @@ export function CommentsButton({
         <span className="ms-2 badge text-bg-light">+{unreadCount}</span>
       )}
     </Link>
+  );
+}
+
+type PostMarkReadButtonProps = {
+  post: Post;
+  read: boolean;
+  loading: boolean;
+  onMarkRead: (form: MarkPostAsRead) => void;
+};
+function PostMarkReadButton({
+  post,
+  read,
+  loading,
+  onMarkRead,
+}: PostMarkReadButtonProps) {
+  return (
+    <button
+      className="btn btn-sm border-light-subtle btn-animate text-muted"
+      onClick={() => onMarkRead({ post_id: post.id, read: !read })}
+      data-tippy-content={
+        read
+          ? I18NextService.i18n.t("mark_as_unread")
+          : I18NextService.i18n.t("mark_as_read")
+      }
+      aria-label={
+        read
+          ? I18NextService.i18n.t("mark_as_unread")
+          : I18NextService.i18n.t("mark_as_read")
+      }
+    >
+      {loading ? (
+        <Spinner />
+      ) : (
+        <Icon icon="check" classes={`icon-inline ${read && "text-success"}`} />
+      )}
+    </button>
   );
 }
 
@@ -243,19 +315,17 @@ function crossPostBody(
   return bodyOut;
 }
 
-function handleShare(post: Post) {
+async function handleShare(post: Post, isoData: IsoDataOptionalSite) {
   const { name, body, id } = post;
-  share({
+  await share({
     title: name,
     text: body?.slice(0, 50),
-    url: `${getHttpBase()}/post/${id}`,
+    url: httpFrontendUrl(`/post/${id}`, isoData),
   });
 }
 
 // TODO All these handlers should not have to exist. The PostActionsDropdown should push up the forms directly
 function handleMarkPostAsRead(props: PostActionBarProps) {
-  if (!props.markable) return;
-
   // Toggle the read, based on the existence of read_at
   const read = !props.postView.post_actions?.read_at;
 
@@ -312,6 +382,13 @@ function handleModLock(i: PostActionBarProps, reason: string) {
   return i.onLockPost({
     post_id: i.postView.post.id,
     locked: !i.postView.post.locked,
+    reason,
+  });
+}
+
+function handleWarnPost(i: PostActionBarProps, reason: string) {
+  return i.onWarnPost({
+    post_id: i.postView.post.id,
     reason,
   });
 }

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:alpine AS builder
+FROM node:current-slim AS builder
 
 ARG TARGETARCH
 
@@ -8,14 +8,17 @@ ARG TARGETARCH
 # Done for two reasons:
 # - libvips binaries are not available for ARM32
 # - It can break depending on the CPU (https://github.com/LemmyNet/lemmy-ui/issues/1566)
-RUN \
-  --mount=type=cache,target=/var/cache/apk,id=apk-${TARGETARCH},sharing=private \
-  set -x && apk update && apk upgrade && apk add curl python3 build-base gcc wget git vips-dev pkgconfig py3-pip make g++
+# Caching as per https://stackoverflow.com/a/72851168
+RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
+    --mount=target=/var/cache/apt,type=cache,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get -y --no-install-recommends install \
+          curl python3 gcc wget git libvips-dev pkg-config python3-pip make g++
 
 # Install node-gyp and corepack
-RUN \
-  --mount=type=cache,target=/root/.npm \
-  npm install -g -f node-gyp corepack
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g -f node-gyp corepack
 
 # Enable corepack to use pnpm
 RUN corepack enable
@@ -26,7 +29,7 @@ ENV npm_config_target_platform=linux
 ENV npm_config_target_libc=musl
 
 # Cache deps
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN \
   --mount=type=cache,target=/root/.local/share/pnpm/store \
   pnpm i
@@ -42,7 +45,14 @@ COPY src src
 COPY .git .git
 
 # Set UI version 
-RUN echo "export const VERSION = '$(git describe --tag)';" > "src/shared/version.ts"
+# If the CI is the cron, then use nightly, otherwise use the tag.
+ARG CI_PIPELINE_EVENT
+RUN \
+  CURRENT_VERSION=$(git describe --tag --abbrev=0 | sed 's/-.*//g'); \
+  VERSION_OUT=$([ "$CI_PIPELINE_EVENT" = "cron" ] && echo "$CURRENT_VERSION-nightly-$(date -u +"%Y-%m-%d")" || echo $(git describe --tag)); \
+  echo "export const VERSION = '$VERSION_OUT';" > "src/shared/version.ts"
+RUN cat src/shared/version.ts
+
 RUN echo "export const BUILD_DATE_ISO8601 = '$(date -u +"%Y-%m-%dT%H:%M:%SZ")';" > "src/shared/build-date.ts"
 
 RUN \
@@ -59,15 +69,18 @@ RUN rm -rf ./node_modules/import-sort-parser-typescript
 RUN rm -rf ./node_modules/typescript
 RUN rm -rf ./node_modules/npm
 
-FROM node:alpine AS runner
+FROM node:current-slim AS runner
 
 ARG TARGETARCH
 
 ENV NODE_ENV=production
 
-RUN \
-  --mount=type=cache,target=/var/cache/apk,id=apk-${TARGETARCH},sharing=private \
-  apk update && apk add curl vips-cpp
+RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
+    --mount=target=/var/cache/apt,type=cache,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get -y --no-install-recommends install \
+           curl
 
 COPY --from=builder --chown=node:node /usr/src/app/dist /app/dist
 COPY --from=builder --chown=node:node /usr/src/app/node_modules /app/node_modules
@@ -85,4 +98,4 @@ USER node
 EXPOSE 1234
 WORKDIR /app
 
-CMD ["node", "dist/js/server.js"]
+CMD ["node", "--enable-source-maps", "dist/js/server.js"]

@@ -5,7 +5,6 @@ import {
   BanFromCommunity,
   BanPerson,
   BlockPerson,
-  CommentResponse,
   CreateComment,
   CreateCommentLike,
   CreateCommentReport,
@@ -22,7 +21,6 @@ import {
   LockPost,
   MarkPostAsRead,
   PersonView,
-  PostResponse,
   PurgeComment,
   PurgePerson,
   PurgePost,
@@ -33,19 +31,24 @@ import {
   PostSortType,
   TransferCommunity,
   MyUserInfo,
-  PersonContentCombinedView,
+  PostCommentCombinedView,
   LocalSite,
   NotePerson,
   LockComment,
   BlockCommunity,
+  CommentId,
+  PostId,
+  ModEditPost,
+  CreateCommentWarning,
+  CreatePostWarning,
+  HidePost,
 } from "lemmy-js-client";
 import { CommentNodes } from "../comment/comment-nodes";
 import { PostListing } from "../post/post-listing";
-import { RequestState } from "../../services/HttpService";
 import { commentToFlatNode } from "@utils/app";
 
 interface PersonDetailsProps {
-  content: PersonContentCombinedView[];
+  content: PostCommentCombinedView[];
   admins: PersonView[];
   allLanguages: Language[];
   siteLanguages: number[];
@@ -55,44 +58,48 @@ interface PersonDetailsProps {
   showAdultConsentModal: boolean;
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
-  onSaveComment(form: SaveComment): Promise<void>;
-  onCreateComment(form: CreateComment): Promise<RequestState<CommentResponse>>;
-  onEditComment(form: EditComment): Promise<RequestState<CommentResponse>>;
-  onCommentVote(form: CreateCommentLike): Promise<void>;
-  onBlockPerson(form: BlockPerson): Promise<void>;
-  onBlockCommunity(form: BlockCommunity): Promise<void>;
-  onDeleteComment(form: DeleteComment): Promise<void>;
-  onRemoveComment(form: RemoveComment): Promise<void>;
-  onDistinguishComment(form: DistinguishComment): Promise<void>;
-  onAddModToCommunity(form: AddModToCommunity): Promise<void>;
-  onAddAdmin(form: AddAdmin): Promise<void>;
-  onBanPersonFromCommunity(form: BanFromCommunity): Promise<void>;
-  onBanPerson(form: BanPerson): Promise<void>;
-  onTransferCommunity(form: TransferCommunity): Promise<void>;
-  onFetchChildren?(form: GetComments): void;
-  onCommentReport(form: CreateCommentReport): Promise<void>;
-  onPurgePerson(form: PurgePerson): Promise<void>;
-  onPurgeComment(form: PurgeComment): Promise<void>;
-  onPostEdit(form: EditPost): Promise<RequestState<PostResponse>>;
-  onPostVote(form: CreatePostLike): Promise<RequestState<PostResponse>>;
-  onPostReport(form: CreatePostReport): Promise<void>;
-  onLockPost(form: LockPost): Promise<void>;
-  onDeletePost(form: DeletePost): Promise<void>;
-  onRemovePost(form: RemovePost): Promise<void>;
-  onSavePost(form: SavePost): Promise<void>;
-  onFeaturePost(form: FeaturePost): Promise<void>;
-  onPurgePost(form: PurgePost): Promise<void>;
-  onMarkPostAsRead(form: MarkPostAsRead): Promise<void>;
-  onPersonNote(form: NotePerson): Promise<void>;
-  onLockComment(form: LockComment): Promise<void>;
+  createCommentLoading: CommentId | undefined;
+  editCommentLoading: CommentId | undefined;
+  voteCommentLoading: CommentId | undefined;
+  votePostLoading: PostId | undefined;
+  onSaveComment: (form: SaveComment) => void;
+  onCreateComment: (form: CreateComment) => void;
+  onEditComment: (form: EditComment) => void;
+  onCommentVote: (form: CreateCommentLike) => void;
+  onBlockPerson: (form: BlockPerson) => void;
+  onBlockCommunity: (form: BlockCommunity) => void;
+  onDeleteComment: (form: DeleteComment) => void;
+  onRemoveComment: (form: RemoveComment) => void;
+  onDistinguishComment: (form: DistinguishComment) => void;
+  onAddModToCommunity: (form: AddModToCommunity) => void;
+  onAddAdmin: (form: AddAdmin) => void;
+  onBanPersonFromCommunity: (form: BanFromCommunity) => void;
+  onBanPerson: (form: BanPerson) => void;
+  onTransferCommunity: (form: TransferCommunity) => void;
+  onFetchChildren: (form: GetComments) => void;
+  onCommentReport: (form: CreateCommentReport) => void;
+  onPurgePerson: (form: PurgePerson) => void;
+  onPurgeComment: (form: PurgeComment) => void;
+  onPostEdit: (form: EditPost) => void;
+  onPostModEdit: (form: ModEditPost) => void;
+  onPostVote: (form: CreatePostLike) => void;
+  onPostReport: (form: CreatePostReport) => void;
+  onLockPost: (form: LockPost) => void;
+  onWarnPost: (form: CreatePostWarning) => void;
+  onDeletePost: (form: DeletePost) => void;
+  onRemovePost: (form: RemovePost) => void;
+  onSavePost: (form: SavePost) => void;
+  onFeaturePost: (form: FeaturePost) => void;
+  onPurgePost: (form: PurgePost) => void;
+  onMarkPostAsRead: (form: MarkPostAsRead) => void;
+  onPersonNote: (form: NotePerson) => void;
+  onLockComment: (form: LockComment) => void;
+  onWarnComment: (form: CreateCommentWarning) => void;
+  onHidePost: (form: HidePost) => void;
 }
 
-export class PersonDetails extends Component<PersonDetailsProps, any> {
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
-  renderItemType(i: PersonContentCombinedView): InfernoNode {
+export class PersonDetails extends Component<PersonDetailsProps, never> {
+  renderItemType(i: PostCommentCombinedView): InfernoNode {
     switch (i.type_) {
       case "comment": {
         return (
@@ -101,9 +108,18 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             nodes={[commentToFlatNode(i)]}
             viewType={"flat"}
             admins={this.props.admins}
-            noBorder
             showCommunity
             showContext
+            showMarkRead={"hide"}
+            showBadgeForPostCreator={false}
+            mutePersonName
+            muteCommunityName={false}
+            hideAvatar
+            markReadLoading={undefined}
+            fetchChildrenLoading={undefined}
+            createLoading={this.props.createCommentLoading}
+            editLoading={this.props.editCommentLoading}
+            voteLoading={this.props.voteCommentLoading}
             hideImages={false}
             allLanguages={this.props.allLanguages}
             siteLanguages={this.props.siteLanguages}
@@ -129,6 +145,8 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             onPurgeComment={this.props.onPurgeComment}
             onPersonNote={this.props.onPersonNote}
             onLockComment={this.props.onLockComment}
+            onWarnComment={this.props.onWarnComment}
+            onMarkRead={async () => {}}
           />
         );
       }
@@ -139,14 +157,21 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             postView={i}
             showCrossPosts="show_separately"
             admins={this.props.admins}
+            communityTags={[]}
             postListingMode="small_card"
             showCommunity
+            topBorder
             crossPosts={[]}
             showBody={"preview"}
             hideImage={false}
             viewOnly={false}
             disableAutoMarkAsRead={false}
             editLoading={false}
+            markReadLoading={false}
+            mutePersonName
+            muteCommunityName={false}
+            hideAvatar
+            voteLoading={this.props.votePostLoading === i.post.id}
             enableNsfw={this.props.enableNsfw}
             showAdultConsentModal={this.props.showAdultConsentModal}
             allLanguages={this.props.allLanguages}
@@ -154,11 +179,13 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             myUserInfo={this.props.myUserInfo}
             localSite={this.props.localSite}
             onPostEdit={this.props.onPostEdit}
+            onPostModEdit={this.props.onPostModEdit}
             onPostVote={this.props.onPostVote}
             onPostReport={this.props.onPostReport}
             onBlockPerson={this.props.onBlockPerson}
             onBlockCommunity={this.props.onBlockCommunity}
             onLockPost={this.props.onLockPost}
+            onWarnPost={this.props.onWarnPost}
             onDeletePost={this.props.onDeletePost}
             onRemovePost={this.props.onRemovePost}
             onSavePost={this.props.onSavePost}
@@ -170,8 +197,8 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
             onAddModToCommunity={this.props.onAddModToCommunity}
             onAddAdmin={this.props.onAddAdmin}
             onTransferCommunity={this.props.onTransferCommunity}
-            onHidePost={async () => {}}
-            markable
+            onHidePost={this.props.onHidePost}
+            showMarkRead="dropdown"
             onMarkPostAsRead={this.props.onMarkPostAsRead}
             onPersonNote={this.props.onPersonNote}
             onScrollIntoCommentsClick={() => {}}
@@ -182,15 +209,8 @@ export class PersonDetails extends Component<PersonDetailsProps, any> {
   }
 
   render(): InfernoNode {
-    const combined: PersonContentCombinedView[] = this.props.content;
+    const combined: PostCommentCombinedView[] = this.props.content;
 
-    return (
-      <div>
-        {combined.map(i => [
-          this.renderItemType(i),
-          <hr key={i.type_} className="my-3" />,
-        ])}
-      </div>
-    );
+    return <div>{combined.map(i => [this.renderItemType(i)])}</div>;
   }
 }

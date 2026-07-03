@@ -1,5 +1,5 @@
 import { isAnonymousPath, isAuthPath, setIsoData } from "@utils/app";
-import { Component, createRef, linkEvent } from "inferno";
+import { Component, createRef, InfernoMouseEvent } from "inferno";
 import { Provider } from "inferno-i18next-dess";
 import { Route, Switch } from "inferno-router";
 import { IsoDataOptionalSite } from "@utils/types";
@@ -18,8 +18,12 @@ import { destroyTippy, setupTippy } from "@utils/tippy";
 import { Locale, setDefaultOptions } from "date-fns";
 import { i18n } from "i18next";
 import { setupEmojiDataModel } from "@utils/markdown";
+import { RouteComponentProps } from "inferno-router";
 
-function handleJumpToContent(app: App, event: any) {
+function handleJumpToContent(
+  app: App,
+  event: InfernoMouseEvent<HTMLButtonElement>,
+) {
   event.preventDefault();
   app.contentRef.current?.focus();
 }
@@ -29,12 +33,12 @@ interface AppProps {
   i18n: i18n;
 }
 
-export default class App extends Component<AppProps, any> {
+export default class App extends Component<AppProps, object> {
   private isoData: IsoDataOptionalSite = setIsoData(this.context);
   private readonly rootRef = createRef<HTMLDivElement>();
   readonly contentRef = createRef<HTMLDivElement>();
 
-  constructor(props: AppProps, context: any) {
+  constructor(props: AppProps, context: object) {
     super(props, context);
 
     I18NextService.i18n = this.props.i18n;
@@ -65,7 +69,9 @@ export default class App extends Component<AppProps, any> {
         key={path}
         path={path}
         exact
-        component={routeProps => {
+        component={(
+          routeProps: RouteComponentProps<Record<string, string>>,
+        ) => {
           if (!fetchInitialData) {
             FirstLoadService.falsify();
           }
@@ -82,12 +88,12 @@ export default class App extends Component<AppProps, any> {
                 this.isoData.siteRes,
                 this.isoData.myUserInfo,
               ),
-            };
+            } as RouteComponentProps<Record<string, string>>;
           }
 
           // When key is location.key the component will be recreated when
           // navigating to itself. This is usesful to e.g. reset forms.
-          const key = mountedSameRouteNavKey ?? routeProps.location.key;
+          const key: string = mountedSameRouteNavKey ?? routeProps.location.key;
 
           return (
             <ErrorGuard>
@@ -137,7 +143,7 @@ export default class App extends Component<AppProps, any> {
             <button
               type="button"
               className="btn skip-link bg-light position-absolute start-0 z-3"
-              onClick={linkEvent(this, handleJumpToContent)}
+              onClick={event => handleJumpToContent(this, event)}
             >
               {I18NextService.i18n.t("jump_to_content", "Jump to content")}
             </button>

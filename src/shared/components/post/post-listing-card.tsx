@@ -1,8 +1,12 @@
 import { tippyMixin } from "@components/mixins/tippy-mixin";
 import { mdToHtml } from "@utils/markdown";
 import { isAudio, isImage, isMagnetLink, isVideo } from "@utils/media";
-import { ShowBodyType, ShowCrossPostsType } from "@utils/types";
-import { Component } from "inferno";
+import {
+  ShowBodyType,
+  ShowCrossPostsType,
+  ShowMarkReadType,
+} from "@utils/types";
+import { Component, SemiSyntheticEvent, InfernoNode } from "inferno";
 import {
   AddAdmin,
   AddModToCommunity,
@@ -12,8 +16,8 @@ import {
   BlockPerson,
   CreatePostLike,
   CreatePostReport,
+  CreatePostWarning,
   DeletePost,
-  EditPost,
   FeaturePost,
   HidePost,
   Language,
@@ -36,7 +40,6 @@ import {
   PostPublishedTime,
   UrlLine,
   TorrentHelp,
-  PostImg,
   PostBadges,
 } from "./common";
 import { CrossPosts } from "./cross-posts";
@@ -44,6 +47,8 @@ import { PostActionBar } from "./post-action-bar";
 import { PostThumbnail } from "./post-thumbnail";
 import classNames from "classnames";
 import { MetadataCard } from "./metadata-card";
+import { hideAnimatedImage, showMedia } from "@utils/app";
+import { PictrsImage } from "@components/common/pictrs-image";
 
 type PostListingCardState = {
   viewSource: boolean;
@@ -65,31 +70,38 @@ type PostListingCardProps = {
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
   showCrossPosts: ShowCrossPostsType;
-  markable: boolean;
+  showMarkRead: ShowMarkReadType;
   disableAutoMarkAsRead: boolean;
   editLoading: boolean;
-  onEditClick(): void;
-  onPostEdit(form: EditPost): void;
-  onPostVote(form: CreatePostLike): void;
-  onPostReport(form: CreatePostReport): void;
-  onBlockPerson(form: BlockPerson): void;
-  onBlockCommunity(form: BlockCommunity): void;
-  onLockPost(form: LockPost): void;
-  onDeletePost(form: DeletePost): void;
-  onRemovePost(form: RemovePost): void;
-  onSavePost(form: SavePost): void;
-  onFeaturePost(form: FeaturePost): void;
-  onPurgePerson(form: PurgePerson): void;
-  onPurgePost(form: PurgePost): void;
-  onBanPersonFromCommunity(form: BanFromCommunity): void;
-  onBanPerson(form: BanPerson): void;
-  onAddModToCommunity(form: AddModToCommunity): void;
-  onAddAdmin(form: AddAdmin): void;
-  onTransferCommunity(form: TransferCommunity): void;
-  onHidePost(form: HidePost): void;
-  onPersonNote(form: NotePerson): void;
-  onScrollIntoCommentsClick(e: MouseEvent): void;
-  onMarkPostAsRead(form: MarkPostAsRead): void;
+  notificationRead?: boolean;
+  markReadLoading: boolean;
+  voteLoading: boolean;
+  topBorder: boolean;
+  mutePersonName: boolean;
+  muteCommunityName: boolean;
+  hideAvatar: boolean;
+  onEditClick: () => void;
+  onPostVote: (form: CreatePostLike) => void;
+  onPostReport: (form: CreatePostReport) => void;
+  onBlockPerson: (form: BlockPerson) => void;
+  onBlockCommunity: (form: BlockCommunity) => void;
+  onLockPost: (form: LockPost) => void;
+  onWarnPost: (form: CreatePostWarning) => void;
+  onDeletePost: (form: DeletePost) => void;
+  onRemovePost: (form: RemovePost) => void;
+  onSavePost: (form: SavePost) => void;
+  onFeaturePost: (form: FeaturePost) => void;
+  onPurgePerson: (form: PurgePerson) => void;
+  onPurgePost: (form: PurgePost) => void;
+  onBanPersonFromCommunity: (form: BanFromCommunity) => void;
+  onBanPerson: (form: BanPerson) => void;
+  onAddModToCommunity: (form: AddModToCommunity) => void;
+  onAddAdmin: (form: AddAdmin) => void;
+  onTransferCommunity: (form: TransferCommunity) => void;
+  onHidePost: (form: HidePost) => void;
+  onPersonNote: (form: NotePerson) => void;
+  onScrollIntoCommentsClick: (e: MouseEvent) => void;
+  onMarkPostAsRead: (form: MarkPostAsRead) => void;
 };
 
 @tippyMixin
@@ -100,10 +112,6 @@ export class PostListingCard extends Component<
   state: PostListingCardState = {
     viewSource: false,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   render() {
     const p = this.props;
@@ -117,7 +125,11 @@ export class PostListingCard extends Component<
 
     return (
       <div>
-        <article className="post-container">
+        <article
+          className={classNames("post-container", {
+            "border-top border-light-subtle": p.topBorder,
+          })}
+        >
           <div className="row mb-1">
             <div className="col flex-grow-1">
               <PostCreatedLine
@@ -126,11 +138,14 @@ export class PostListingCard extends Component<
                 showPublishedTime={false}
                 showUrlLine={false}
                 showPostBadges={false}
+                mutePersonName={p.mutePersonName}
+                muteCommunityName={p.muteCommunityName}
+                hideAvatar={p.hideAvatar}
                 allLanguages={p.allLanguages}
                 myUserInfo={p.myUserInfo}
               />
             </div>
-            <div className="col-auto small ps-1">
+            <div className="col-auto small text-muted ps-1">
               <PostPublishedTime post={p.postView.post} />
             </div>
           </div>
@@ -142,6 +157,7 @@ export class PostListingCard extends Component<
                 <span> </span>
                 <PostBadges
                   post={p.postView.post}
+                  tags={p.postView.tags}
                   allLanguages={p.allLanguages}
                 />
               </div>
@@ -177,11 +193,14 @@ export class PostListingCard extends Component<
             postView={p.postView}
             admins={p.admins}
             showBody={p.showBody}
-            markable={p.markable}
+            showMarkRead={p.showMarkRead}
             viewOnly={p.viewOnly}
             viewSource={this.state.viewSource}
             myUserInfo={p.myUserInfo}
             localSite={p.localSite}
+            notificationRead={p.notificationRead}
+            markReadLoading={p.markReadLoading}
+            voteLoading={p.voteLoading}
             onPostVote={p.onPostVote}
             onScrollIntoCommentsClick={p.onScrollIntoCommentsClick}
             onViewSource={() => handleViewSource(this)}
@@ -191,6 +210,7 @@ export class PostListingCard extends Component<
             onBlockPerson={p.onBlockPerson}
             onBlockCommunity={p.onBlockCommunity}
             onLockPost={p.onLockPost}
+            onWarnPost={p.onWarnPost}
             onDeletePost={p.onDeletePost}
             onRemovePost={p.onRemovePost}
             onSavePost={p.onSavePost}
@@ -232,7 +252,7 @@ type BodyProps = {
   viewSource: boolean;
 };
 function Body({ viewSource, body, showBody }: BodyProps) {
-  const classes = classNames("my-2", {
+  const classes = classNames("my-2 postContent", {
     "fade-preview": showBody === "preview",
   });
 
@@ -241,7 +261,7 @@ function Body({ viewSource, body, showBody }: BodyProps) {
   });
 
   return (
-    <article id="postContent" className={classes}>
+    <article className={classes}>
       {viewSource ? (
         <pre>{body}</pre>
       ) : (
@@ -259,7 +279,7 @@ function Body({ viewSource, body, showBody }: BodyProps) {
 type VideoBlockProps = {
   postView: PostView;
 };
-function VideoBlock({ postView }: VideoBlockProps) {
+function VideoBlock({ postView }: VideoBlockProps): InfernoNode | void {
   const post = postView.post;
   const url = post.url;
 
@@ -270,7 +290,7 @@ function VideoBlock({ postView }: VideoBlockProps) {
       <div className="ratio ratio-16x9 mt-3">
         <video
           onLoadStart={handleMediaLoadStart}
-          onPlay={this.handleMediaLoadStart}
+          onPlay={handleMediaLoadStart}
           onVolumeChange={handleMediaVolumeChange}
           controls
           aria-label={post.alt_text}
@@ -307,8 +327,49 @@ function VideoBlock({ postView }: VideoBlockProps) {
   }
 }
 
-function handleMediaLoadStart(e: Event) {
-  const video = e.target as HTMLMediaElement;
+type PostImgProps = {
+  postView: PostView;
+  showAdultConsentModal: boolean;
+  hideImage: boolean;
+  myUserInfo: MyUserInfo | undefined;
+};
+function PostImg({
+  postView,
+  showAdultConsentModal,
+  hideImage,
+  myUserInfo,
+}: PostImgProps) {
+  if (showAdultConsentModal) {
+    return <></>;
+  }
+
+  // Use the full-size image for expands
+  const post = postView.post;
+  const url = post.url;
+  const thumbnail = post.thumbnail_url;
+  const imageSrc = url && isImage(url) ? url : thumbnail;
+
+  return !hideImage &&
+    showMedia(myUserInfo) &&
+    imageSrc &&
+    !hideAnimatedImage(imageSrc, myUserInfo) ? (
+    <div className="my-2">
+      <PictrsImage
+        src={imageSrc}
+        type="large_thumbnail"
+        alt={post.alt_text}
+        imageDetails={postView.image_details}
+        nsfw={postView.post.nsfw || postView.community.nsfw}
+        viewer
+      />
+    </div>
+  ) : (
+    <></>
+  );
+}
+
+function handleMediaLoadStart(e: SemiSyntheticEvent<HTMLMediaElement>) {
+  const video = e.currentTarget;
   const volume = localStorage.getItem("video_volume_level");
   const muted = localStorage.getItem("video_muted");
   video.volume = Number(volume || 0);
@@ -319,8 +380,8 @@ function handleMediaLoadStart(e: Event) {
   }
 }
 
-function handleMediaVolumeChange(e: Event) {
-  const video = e.target as HTMLMediaElement;
+function handleMediaVolumeChange(e: SemiSyntheticEvent<HTMLMediaElement>) {
+  const video = e.currentTarget;
   localStorage.setItem("video_muted", video.muted.toString());
   localStorage.setItem("video_volume_level", video.volume.toString());
 }

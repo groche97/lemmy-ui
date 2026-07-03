@@ -396,16 +396,16 @@ br.big {
 }
 
 .avatar-overlay {
-  width: 20vw;
-  height: 20vw;
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+}
+
+.avatar {
   max-width: 120px;
   max-height: 120px;
   min-width: 80px;
   min-height: 80px;
-}
-
-.avatar-pushup {
-  margin-top: -60px;
 }
 
 .img-icon {
@@ -514,4 +514,64 @@ em-emoji-picker {
   -webkit-mask: var(--mask);
   mask: var(--mask);
   max-height: 100px;
+  overflow: clip;
+}
+
+.legal-info-box {
+  max-height: 200px;
+}
+
+.interval-filter-input {
+  min-width: 5em !important;
+}
+
+/* Choices */
+.no-caret {
+  background-image: none !important;
+}
+
+.choices {
+  min-width: 100px;
+}
+.choices[data-type*="select"] > .choices__inner,
+.choices__list[aria-expanded] .choices__item--selectable {
+  background-color: var(--bs-body-bg);
+}
+
+.choices__list,
+.choices__placeholder {
+  color: unset;
+  background-color: unset;
+}
+
+.choices__list--dropdown {
+  border-width: var(--bs-border-width);
+  border-color: var(--bs-border-color);
+  border-radius: var(--bs-border-radius) !important;
+}
+
+.choices__list--dropdown .choices__item--selectable.is-highlighted,
+.choices__list[aria-expanded] .choices__item--selectable.is-highlighted {
+  background-color: var(--bs-highlight-bg);
+  color: var(--bs-highlight-color);
+}
+
+.choices__list--multiple .choices__item {
+  color: var(--bs-secondary-color);
+  background-color: var(--bs-secondary-bg);
+  border-width: var(--bs-border-width);
+  border-color: var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  border: 0px;
+  padding-top: 0px;
+  padding-bottom: 0px;
+}
+
+.choices__input {
+  background-color: var(--bs-body-secondary) !important;
+}
+
+/* A faster animation for viewerjs */
+.viewer-transition {
+  transition-duration: 0.1s; /* 0.3s -> 0.1s */
 }

@@ -1,26 +1,28 @@
 import { Icon } from "@components/common/icon";
 import { MomentTime } from "@components/common/moment-time";
-import { PictrsImage } from "@components/common/pictrs-image";
 import { UserBadges } from "@components/common/user-badges";
 import { CommunityLink } from "@components/community/community-link";
 import { PersonListing } from "@components/person/person-listing";
 import { I18NextService } from "@services/index";
-import { hideAnimatedImage, hideImages, linkTarget } from "@utils/app";
+import { linkTarget, setIsoData } from "@utils/app";
 import { relTags, torrentHelpUrl } from "@utils/config";
 import { formatRelativeDate } from "@utils/date";
-import { getExternalHost } from "@utils/env";
+import { httpFrontendUrl } from "@utils/env";
 import { mdToHtmlInline } from "@utils/markdown";
-import {
-  isMagnetLink,
-  extractMagnetLinkDownloadName,
-  isImage,
-  isMedia,
-} from "@utils/media";
+import { isMagnetLink, extractMagnetLinkDownloadName } from "@utils/media";
 import { Link } from "inferno-router";
-import { Post, PostView, MyUserInfo, Language } from "lemmy-js-client";
+import {
+  Post,
+  PostView,
+  MyUserInfo,
+  Language,
+  CommunityTag as CommunityTagI,
+} from "lemmy-js-client";
 import { T } from "inferno-i18next-dess";
 import { hostname } from "@utils/helpers";
 import { ShowBodyType } from "@utils/types";
+import { CommunityTag } from "@components/community/community-tag";
+import { InfernoNode } from "inferno";
 
 type PostNameProps = {
   post: Post;
@@ -29,12 +31,9 @@ type PostNameProps = {
 export function PostName({ post, showBody }: PostNameProps) {
   const url = post.url;
 
-  // Only navigate to external, if its media, or the full post
-  const navigateExternal = (url && isMedia(url)) || showBody === "full";
-
   return (
     <h1 className="post-name h5 d-inline text-break">
-      {navigateExternal ? (
+      {showBody === "full" ? (
         <a
           className={
             !post.featured_community && !post.featured_local
@@ -55,31 +54,37 @@ export function PostName({ post, showBody }: PostNameProps) {
 
 type PostBadgesProps = {
   post: Post;
+  tags: CommunityTagI[];
   allLanguages: Language[];
 };
-export function PostBadges({ post, allLanguages }: PostBadgesProps) {
+export function PostBadges({ post, tags, allLanguages }: PostBadgesProps) {
   return (
-    <>
+    <span className="mx-1">
+      {tags.map(tag => (
+        <span className="me-1">
+          <CommunityTag tag={tag} useName={false} />
+        </span>
+      ))}
       {post.language_id !== 0 && (
-        <span className="mx-1 badge text-bg-light">
+        <span className="me-1 badge text-bg-light">
           {allLanguages.find(lang => lang.id === post.language_id)?.name}
         </span>
       )}{" "}
       {post.scheduled_publish_time_at && (
-        <span className="mx-1 badge text-bg-light">
+        <span className="me-1 badge text-bg-light">
           {I18NextService.i18n.t("publish_in_time", {
             time: formatRelativeDate(post.scheduled_publish_time_at, true),
           })}
         </span>
       )}
       {post.removed && (
-        <small className="ms-2 badge text-bg-light">
+        <small className="me-2 badge text-bg-light">
           {I18NextService.i18n.t("removed")}
         </small>
       )}
       {post.deleted && (
         <small
-          className="unselectable pointer ms-2 text-muted fst-italic"
+          className="unselectable pointer me-2 text-muted fst-italic"
           data-tippy-content={I18NextService.i18n.t("deleted")}
         >
           <Icon icon="trash" classes="icon-inline text-danger" />
@@ -87,7 +92,7 @@ export function PostBadges({ post, allLanguages }: PostBadgesProps) {
       )}
       {post.locked && (
         <small
-          className="unselectable pointer ms-2 text-muted fst-italic"
+          className="unselectable pointer me-2 text-muted fst-italic"
           data-tippy-content={I18NextService.i18n.t("locked")}
         >
           <Icon icon="lock" classes="icon-inline text-danger" />
@@ -95,7 +100,7 @@ export function PostBadges({ post, allLanguages }: PostBadgesProps) {
       )}
       {post.featured_community && (
         <small
-          className="unselectable pointer ms-2 text-muted fst-italic"
+          className="unselectable pointer me-2 text-muted fst-italic"
           data-tippy-content={I18NextService.i18n.t("featured_in_community")}
           aria-label={I18NextService.i18n.t("featured_in_community")}
         >
@@ -104,7 +109,7 @@ export function PostBadges({ post, allLanguages }: PostBadgesProps) {
       )}
       {post.featured_local && (
         <small
-          className="unselectable pointer ms-2 text-muted fst-italic"
+          className="unselectable pointer me-2 text-muted fst-italic"
           data-tippy-content={I18NextService.i18n.t("featured_in_local")}
           aria-label={I18NextService.i18n.t("featured_in_local")}
         >
@@ -112,11 +117,11 @@ export function PostBadges({ post, allLanguages }: PostBadgesProps) {
         </small>
       )}
       {post.nsfw && (
-        <small className="ms-2 badge text-bg-danger">
+        <small className="badge text-bg-danger">
           {I18NextService.i18n.t("nsfw")}
         </small>
       )}
-    </>
+    </span>
   );
 }
 
@@ -126,6 +131,9 @@ type PostCreatedLineProps = {
   showPublishedTime: boolean;
   showUrlLine: boolean;
   showPostBadges: boolean;
+  mutePersonName: boolean;
+  muteCommunityName: boolean;
+  hideAvatar: boolean;
   allLanguages: Language[];
   myUserInfo: MyUserInfo | undefined;
 };
@@ -135,12 +143,12 @@ export function PostCreatedLine({
   showPublishedTime,
   showUrlLine,
   showPostBadges,
+  mutePersonName,
+  muteCommunityName,
+  hideAvatar,
   allLanguages,
   myUserInfo,
 }: PostCreatedLineProps) {
-  // Hide the person avatar only on the home page (IE where you show the community)
-  const hideAvatar = showCommunity;
-
   return (
     <div className="small mb-1 mb-md-0">
       {showCommunity && (
@@ -148,6 +156,7 @@ export function PostCreatedLine({
           <CommunityLink
             community={postView.community}
             myUserInfo={myUserInfo}
+            muted={muteCommunityName}
           />
           <span className="mx-1 small text-muted">
             {I18NextService.i18n.t("by")}
@@ -160,13 +169,11 @@ export function PostCreatedLine({
           postView.creator_banned || postView.creator_banned_from_community
         }
         myUserInfo={myUserInfo}
-        muted
+        muted={mutePersonName}
         hideAvatar={hideAvatar}
       />
       <UserBadges
         classNames="ms-1"
-        isModerator={postView.creator_is_moderator}
-        isAdmin={postView.creator_is_admin}
         creator={postView.creator}
         isBanned={postView.creator_banned}
         isBannedFromCommunity={postView.creator_banned_from_community}
@@ -174,7 +181,11 @@ export function PostCreatedLine({
         personActions={postView.person_actions}
       />
       {showPostBadges && (
-        <PostBadges post={postView.post} allLanguages={allLanguages} />
+        <PostBadges
+          post={postView.post}
+          tags={postView.tags}
+          allLanguages={allLanguages}
+        />
       )}
       {showUrlLine && postView.post.url && (
         <>
@@ -229,25 +240,30 @@ type UrlLineProps = {
   postView: PostView;
   myUserInfo: MyUserInfo | undefined;
 };
-export function UrlLine({ postView, myUserInfo }: UrlLineProps) {
+export function UrlLine(
+  { postView, myUserInfo }: UrlLineProps,
+  context: object,
+): InfernoNode | void {
   const post = postView.post;
   const url = post.url;
 
   if (url) {
+    const localUrl =
+      hostname(url) === hostname(httpFrontendUrl("", setIsoData(context)));
     // If its a torrent link, extract the download name
     const linkName = isMagnetLink(url)
       ? extractMagnetLinkDownloadName(url)
-      : !(hostname(url) === getExternalHost())
+      : !localUrl
         ? hostname(url)
         : null;
 
     if (linkName) {
       return (
         url &&
-        !(hostname(url) === getExternalHost()) && (
+        !localUrl && (
           <>
             <a
-              className="fst-italic text-body link-opacity-75 link-opacity-100-hover"
+              className="fst-italic text-body link-opacity-75 link-opacity-100-hover overflow-wrap-anywhere"
               href={url}
               title={url}
               rel={relTags}
@@ -260,46 +276,6 @@ export function UrlLine({ postView, myUserInfo }: UrlLineProps) {
       );
     }
   }
-}
-
-type PostImgProps = {
-  postView: PostView;
-  showAdultConsentModal: boolean;
-  hideImage: boolean;
-  myUserInfo: MyUserInfo | undefined;
-};
-export function PostImg({
-  postView,
-  showAdultConsentModal,
-  hideImage,
-  myUserInfo,
-}: PostImgProps) {
-  if (showAdultConsentModal) {
-    return <></>;
-  }
-
-  // Use the full-size image for expands
-  const post = postView.post;
-  const url = post.url;
-  const thumbnail = post.thumbnail_url;
-  const imageSrc = url && isImage(url) ? url : thumbnail;
-
-  return !hideImages(hideImage, myUserInfo) &&
-    imageSrc &&
-    !hideAnimatedImage(imageSrc, myUserInfo) ? (
-    <div className="my-2">
-      <a href={imageSrc}>
-        <PictrsImage
-          src={imageSrc}
-          alt={post.alt_text}
-          imageDetails={postView.image_details}
-          nsfw={postView.post.nsfw || postView.community.nsfw}
-        />
-      </a>
-    </div>
-  ) : (
-    <></>
-  );
 }
 
 export function TorrentHelp() {

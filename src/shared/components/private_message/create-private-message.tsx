@@ -1,11 +1,12 @@
 import { getRecipientIdFromProps, setIsoData } from "@utils/app";
 import { RouteDataResponse } from "@utils/types";
-import { Component } from "inferno";
+import { Component, InfernoNode } from "inferno";
 import {
   CreatePrivateMessage as CreatePrivateMessageI,
   GetPersonDetails,
   GetPersonDetailsResponse,
   LemmyHttp,
+  PrivateMessageResponse,
 } from "lemmy-js-client";
 import { InitialFetchRequest } from "@utils/types";
 import { FirstLoadService, I18NextService } from "../../services";
@@ -21,7 +22,7 @@ import { HtmlTags } from "../common/html-tags";
 import { Spinner } from "../common/icon";
 import { PrivateMessageForm } from "./private-message-form";
 import { getHttpBaseInternal } from "../../utils/env";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import { IRoutePropsWithFetch } from "@utils/routes";
 import { resourcesSettled } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
@@ -34,6 +35,7 @@ type CreatePrivateMessageData = RouteDataResponse<{
 
 interface CreatePrivateMessageState {
   recipientRes: RequestState<GetPersonDetailsResponse>;
+  createMessageRes: RequestState<PrivateMessageResponse>;
   recipientId: number;
   isIsomorphic: boolean;
 }
@@ -55,6 +57,7 @@ export class CreatePrivateMessage extends Component<
   private isoData = setIsoData<CreatePrivateMessageData>(this.context);
   state: CreatePrivateMessageState = {
     recipientRes: EMPTY_REQUEST,
+    createMessageRes: EMPTY_REQUEST,
     recipientId: getRecipientIdFromProps(this.props),
     isIsomorphic: false,
   };
@@ -63,10 +66,8 @@ export class CreatePrivateMessage extends Component<
     return resourcesSettled([this.state.recipientRes]);
   }
 
-  constructor(props: any, context: any) {
+  constructor(props: CreatePrivateMessageRouteProps, context: object) {
     super(props, context);
-    this.handlePrivateMessageCreate =
-      this.handlePrivateMessageCreate.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -84,10 +85,10 @@ export class CreatePrivateMessage extends Component<
     }
   }
 
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
     match,
-  }: InitialFetchRequest<CreatePrivateMessagePathProps>): Promise<CreatePrivateMessageData> {
+  }: InitialFetchRequest<CreatePrivateMessagePathProps>): Promise<CreatePrivateMessageData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -100,7 +101,7 @@ export class CreatePrivateMessage extends Component<
     return {
       recipientDetailsResponse: await client.getPersonDetails(form),
     };
-  }
+  };
 
   async fetchPersonDetails() {
     this.setState({
@@ -123,7 +124,7 @@ export class CreatePrivateMessage extends Component<
     }
   }
 
-  renderRecipientRes() {
+  renderRecipientRes(): InfernoNode | void {
     switch (this.state.recipientRes.state) {
       case "loading":
         return (
@@ -133,6 +134,8 @@ export class CreatePrivateMessage extends Component<
         );
       case "success": {
         const res = this.state.recipientRes.data;
+        const imageUploadDisabled =
+          this.isoData.siteRes.site_view.local_site.image_upload_disabled;
         return (
           <div className="row">
             <div className="col-12 col-lg-6 offset-lg-3 mb-4">
@@ -141,8 +144,14 @@ export class CreatePrivateMessage extends Component<
               </h1>
               <PrivateMessageForm
                 myUserInfo={this.isoData.myUserInfo}
-                onCreate={this.handlePrivateMessageCreate}
+                onCreate={(form, bypass) =>
+                  handlePrivateMessageCreate(this, form, bypass)
+                }
                 recipient={res.person_view.person}
+                createOrEditLoading={
+                  this.state.createMessageRes.state === "loading"
+                }
+                imageUploadDisabled={imageUploadDisabled}
               />
             </div>
           </div>
@@ -156,29 +165,33 @@ export class CreatePrivateMessage extends Component<
       <div className="create-private-message container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         {this.renderRecipientRes()}
       </div>
     );
   }
+}
 
-  async handlePrivateMessageCreate(
-    form: CreatePrivateMessageI,
-    bypassNavWarning: () => void,
-  ): Promise<boolean> {
-    const res = await HttpService.client.createPrivateMessage(form);
+async function handlePrivateMessageCreate(
+  i: CreatePrivateMessage,
+  form: CreatePrivateMessageI,
+  bypassNavWarning: () => void,
+) {
+  i.setState({ createMessageRes: LOADING_REQUEST });
+  const res = await HttpService.client.createPrivateMessage(form);
+  i.setState({ createMessageRes: res });
 
-    if (res.state === "success") {
-      toast(I18NextService.i18n.t("message_sent"));
+  if (res.state === "success") {
+    toast(I18NextService.i18n.t("message_sent"));
 
-      bypassNavWarning();
-      // Navigate to the front
-      this.context.router.history.push("/");
-    } else if (res.state === "failed") {
-      toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
-    }
-
-    return res.state !== "failed";
+    bypassNavWarning();
+    // Navigate to the front
+    const context = i.context as RouterContext;
+    context.router.history.push("/");
+  } else if (res.state === "failed") {
+    toast(I18NextService.i18n.t(res.err.name as NoOptionI18nKeys), "danger");
   }
+
+  return res.state !== "failed";
 }

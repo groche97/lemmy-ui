@@ -23,8 +23,12 @@ type Props = {
   myUserInfo: MyUserInfo | undefined;
   localSite: LocalSite;
   showCrossPosts: ShowCrossPostsType;
-  onPostVote(form: CreatePostLike): void;
-  onScrollIntoCommentsClick(e: MouseEvent): void;
+  voteLoading: boolean;
+  mutePersonName: boolean;
+  muteCommunityName: boolean;
+  hideAvatar: boolean;
+  onPostVote: (form: CreatePostLike) => void;
+  onScrollIntoCommentsClick: (e: MouseEvent) => void;
 };
 
 export function PostListingList({
@@ -39,6 +43,10 @@ export function PostListingList({
   showCrossPosts,
   onPostVote,
   onScrollIntoCommentsClick,
+  voteLoading,
+  mutePersonName,
+  muteCommunityName,
+  hideAvatar,
 }: Props) {
   return (
     <div>
@@ -54,10 +62,11 @@ export function PostListingList({
               subject={postView.post}
               myVoteIsUpvote={postView.post_actions?.vote_is_upvote}
               disabled={userNotLoggedInOrBanned(myUserInfo)}
+              loading={voteLoading}
             />
           </div>
         )}
-        <div className="col flex-grow-1">
+        <div className="col">
           <PostName post={postView.post} showBody="hidden" />
           <PostCreatedLine
             postView={postView}
@@ -67,6 +76,9 @@ export function PostListingList({
             showPostBadges
             allLanguages={allLanguages}
             myUserInfo={myUserInfo}
+            mutePersonName={mutePersonName}
+            muteCommunityName={muteCommunityName}
+            hideAvatar={hideAvatar}
           />
           <CommentsButton
             postView={postView}

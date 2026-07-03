@@ -1,4 +1,4 @@
-import { Component, linkEvent } from "inferno";
+import { Component, FormEvent, InfernoMouseEvent } from "inferno";
 import { AdminBlockInstanceParams } from "lemmy-js-client";
 import { I18NextService } from "../../services";
 import { randomStr, validInstanceTLD } from "@utils/helpers";
@@ -12,7 +12,7 @@ type BlockForm = {
 };
 
 interface Props {
-  onCreate(form: AdminBlockInstanceParams): void;
+  onCreate: (form: AdminBlockInstanceParams) => void;
 }
 
 interface State {
@@ -25,10 +25,6 @@ export class InstanceBlockForm extends Component<Props, State> {
     form: {},
     bypassNavWarning: true,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   render() {
     const form = this.state.form;
@@ -51,7 +47,7 @@ export class InstanceBlockForm extends Component<Props, State> {
               placeholder="instance.tld"
               className="form-control"
               value={form.instance}
-              onInput={linkEvent(this, this.handleDomainTextChange)}
+              onInput={event => this.handleDomainTextChange(this, event)}
             />
           </div>
           <div className="col-12">
@@ -64,7 +60,7 @@ export class InstanceBlockForm extends Component<Props, State> {
               placeholder={I18NextService.i18n.t("reason")}
               className="form-control"
               value={form.reason}
-              onInput={linkEvent(this, this.handleReasonChange)}
+              onInput={event => this.handleReasonChange(this, event)}
             />
           </div>
           <div className="col-12">
@@ -81,16 +77,16 @@ export class InstanceBlockForm extends Component<Props, State> {
               placeholder={I18NextService.i18n.t("days_until_expiration")}
               min={1}
               value={form.daysUntilExpire}
-              onInput={linkEvent(this, this.handleExpiryChange)}
+              onInput={event => this.handleExpiryChange(this, event)}
               required
             />
           </div>
           <div className="col-12">
             <button
-              className="btn btn-secondary"
+              className="btn btn-light border-light-subtle"
               type="submit"
               disabled={!this.formValid()}
-              onClick={linkEvent(this, this.handleSubmit)}
+              onClick={event => this.handleSubmit(this, event)}
             >
               {I18NextService.i18n.t("create")}
             </button>
@@ -109,21 +105,24 @@ export class InstanceBlockForm extends Component<Props, State> {
     );
   }
 
-  handleDomainTextChange(i: InstanceBlockForm, event: any) {
+  handleDomainTextChange(
+    i: InstanceBlockForm,
+    event: FormEvent<HTMLInputElement>,
+  ) {
     i.setState({
       form: { ...i.state.form, instance: event.target.value },
       bypassNavWarning: false,
     });
   }
 
-  handleReasonChange(i: InstanceBlockForm, event: any) {
+  handleReasonChange(i: InstanceBlockForm, event: FormEvent<HTMLInputElement>) {
     i.setState({
       form: { ...i.state.form, reason: event.target.value },
       bypassNavWarning: false,
     });
   }
 
-  handleExpiryChange(i: InstanceBlockForm, event: any) {
+  handleExpiryChange(i: InstanceBlockForm, event: FormEvent<HTMLInputElement>) {
     i.setState({
       form: {
         ...i.state.form,
@@ -133,7 +132,10 @@ export class InstanceBlockForm extends Component<Props, State> {
     });
   }
 
-  handleSubmit(i: InstanceBlockForm, event: any) {
+  handleSubmit(
+    i: InstanceBlockForm,
+    event: InfernoMouseEvent<HTMLButtonElement>,
+  ) {
     event.preventDefault();
 
     const form = i.state.form;

@@ -5,12 +5,8 @@ import { Link } from "inferno-router";
 import { IsoData } from "@utils/types";
 import { I18NextService } from "../../services";
 
-export class ErrorPage extends Component<any, any> {
+export class ErrorPage extends Component<object, unknown> {
   private isoData: IsoData = setIsoData(this.context);
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   render() {
     const { errorPageData } = this.isoData;

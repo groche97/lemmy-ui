@@ -1,4 +1,10 @@
-import { fetchUsers, personToChoice, setIsoData } from "@utils/app";
+import {
+  communityToChoice,
+  searchCommunities,
+  searchUsers,
+  personToChoice,
+  setIsoData,
+} from "@utils/app";
 import {
   debounce,
   getIdFromString,
@@ -6,30 +12,30 @@ import {
   getQueryString,
   resourcesSettled,
   bareRoutePush,
-  cursorComponents,
 } from "@utils/helpers";
 import { formatRelativeDate } from "@utils/date";
 import { scrollMixin } from "./mixins/scroll-mixin";
 import { amAdmin, amMod } from "@utils/roles";
-import type { DirectionalCursor, QueryParams } from "@utils/types";
+import type { QueryParams } from "@utils/types";
 import { Choice, RouteDataResponse } from "@utils/types";
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { Component, InfernoNode } from "inferno";
 import { T } from "inferno-i18next-dess";
 import { Link } from "inferno-router";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import {
   GetCommunity,
   GetCommunityResponse,
   GetModlog,
-  GetModlogResponse,
+  PagedResponse,
+  ModlogView,
   GetPersonDetails,
   GetPersonDetailsResponse,
   LemmyHttp,
-  ModlogKind,
-  ModlogView,
   MyUserInfo,
   Person,
   Modlog as Modlog_,
+  PaginationCursor,
+  ModlogKindFilter,
 } from "lemmy-js-client";
 import { fetchLimit } from "@utils/config";
 import { InitialFetchRequest } from "@utils/types";
@@ -44,7 +50,6 @@ import {
 import { HtmlTags } from "./common/html-tags";
 import { Icon, Spinner } from "./common/icon";
 import { MomentTime } from "./common/moment-time";
-import { SearchableSelect } from "./common/searchable-select";
 import { communityLink, CommunityLink } from "./community/community-link";
 import { PersonListing } from "./person/person-listing";
 import { getHttpBaseInternal } from "../utils/env";
@@ -52,16 +57,18 @@ import { IRoutePropsWithFetch } from "@utils/routes";
 import { isBrowser } from "@utils/browser";
 import { LoadingEllipses } from "./common/loading-ellipses";
 import { PaginatorCursor } from "./common/paginator-cursor";
-import { TableHr } from "./common/tables";
+import { ResponsiveTableRowHeader, TableHr } from "./common/tables";
+import { NoOptionI18nKeys } from "i18next";
+import { ModlogKindFilterDropdown } from "./common/modlog-kind-filter-dropdown";
+import { FilterChipSelect } from "./common/filter-chip-select";
+import { FilterChipCheckbox } from "./common/filter-chip-checkbox";
 
 const TIME_COLS = "col-6 col-md-2";
 const MOD_COLS = "col-6 col-md-4";
-const ACTION_COLS = "col-12 col-md-6";
-
-type FilterType = "mod" | "user";
+const ACTION_COLS = "col-6 col-md-6";
 
 type ModlogData = RouteDataResponse<{
-  res: GetModlogResponse;
+  res: PagedResponse<ModlogView>;
   communityRes: GetCommunityResponse;
   modUserResponse: GetPersonDetailsResponse;
   userResponse: GetPersonDetailsResponse;
@@ -75,6 +82,8 @@ export function getModlogQueryParams(source?: string): ModlogProps {
       userId: getIdFromString,
       commentId: getIdFromString,
       postId: getIdFromString,
+      communityId: getIdFromString,
+      bulkActionParentId: getIdFromString,
       cursor: (cursor?: string) => cursor,
     },
     source,
@@ -82,26 +91,31 @@ export function getModlogQueryParams(source?: string): ModlogProps {
 }
 
 interface ModlogState {
-  res: RequestState<GetModlogResponse>;
+  res: RequestState<PagedResponse<ModlogView>>;
   communityRes: RequestState<GetCommunityResponse>;
   loadingModSearch: boolean;
   loadingUserSearch: boolean;
+  loadingCommunitySearch: boolean;
   modSearchOptions: Choice[];
   userSearchOptions: Choice[];
+  communitySearchOptions: Choice[];
+
   isIsomorphic: boolean;
 }
 
 interface ModlogProps {
-  cursor?: DirectionalCursor;
+  cursor?: PaginationCursor;
   userId?: number;
   modId?: number;
-  actionType?: ModlogKind;
+  actionType: ModlogKindFilter;
   postId?: number;
   commentId?: number;
+  communityId?: number;
+  bulkActionParentId?: number;
 }
 
-function getActionFromString(action?: string): ModlogKind | undefined {
-  return action as ModlogKind;
+function getActionFromString(action?: string): ModlogKindFilter {
+  return (action as ModlogKindFilter) ?? "all";
 }
 
 interface ModlogEntry {
@@ -221,6 +235,7 @@ export function processModlogEntry(
             <CommunityLink
               community={target_community}
               myUserInfo={myUserInfo}
+              muted={false}
             />
             {reason && (
               <span>
@@ -244,6 +259,7 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={false}
+                muted={false}
               />
             </span>
             <span> as an admin </span>
@@ -264,6 +280,7 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={false}
+                muted={false}
               />
             </span>
             <span> as a mod to the community </span>
@@ -271,6 +288,7 @@ export function processModlogEntry(
               <CommunityLink
                 community={target_community}
                 myUserInfo={myUserInfo}
+                muted={false}
               />
             </span>
           </>
@@ -290,6 +308,7 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={!is_revert}
+                muted={false}
               />
             </span>
             {reason && (
@@ -300,6 +319,13 @@ export function processModlogEntry(
             {expires_at && (
               <span>
                 <div>expires: {formatRelativeDate(expires_at)}</div>
+              </span>
+            )}
+            {modlog.child_count && (
+              <span>
+                <a href={`/modlog?bulkActionParentId=${modlog.id}`}>
+                  {I18NextService.i18n.t("modlog_view_children")}
+                </a>
               </span>
             )}
           </>
@@ -319,6 +345,7 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={!is_revert}
+                muted={false}
               />
             </span>
             <span> from the community </span>
@@ -326,6 +353,7 @@ export function processModlogEntry(
               <CommunityLink
                 community={target_community}
                 myUserInfo={myUserInfo}
+                muted={false}
               />
             </span>
             {reason && (
@@ -336,6 +364,13 @@ export function processModlogEntry(
             {expires_at && (
               <span>
                 <div>expires: {formatRelativeDate(expires_at)}</div>
+              </span>
+            )}
+            {modlog.child_count && (
+              <span>
+                <a href={`/modlog?bulkActionParentId=${modlog.id}`}>
+                  {I18NextService.i18n.t("modlog_view_children")}
+                </a>
               </span>
             )}
           </>
@@ -354,6 +389,7 @@ export function processModlogEntry(
               <CommunityLink
                 community={target_community}
                 myUserInfo={myUserInfo}
+                muted={false}
               />
             </span>
           </>
@@ -376,6 +412,7 @@ export function processModlogEntry(
             <CommunityLink
               community={target_community}
               myUserInfo={myUserInfo}
+              muted={false}
             />
           </>
         ),
@@ -439,6 +476,7 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={false}
+                muted={false}
               />
             </span>
             {reason && (
@@ -471,6 +509,7 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={false}
+                muted={false}
               />
             </span>
             {reason && (
@@ -495,6 +534,7 @@ export function processModlogEntry(
               <CommunityLink
                 community={target_community}
                 myUserInfo={myUserInfo}
+                muted={false}
               />
             </span>
             {reason && (
@@ -539,6 +579,7 @@ export function processModlogEntry(
               <CommunityLink
                 community={target_community}
                 myUserInfo={myUserInfo}
+                muted={false}
               />
             </span>
             <span> to </span>
@@ -547,48 +588,88 @@ export function processModlogEntry(
                 person={target_person}
                 myUserInfo={myUserInfo}
                 banned={false}
+                muted={false}
               />
             </span>
           </>
         ),
       };
     }
+
+    case "mod_warn_comment":
+      return {
+        modlog,
+        moderator,
+        data: target_person && (
+          <>
+            <span>Warned </span>
+            <PersonListing
+              person={target_person}
+              myUserInfo={myUserInfo}
+              banned={false}
+              muted={false}
+            />
+            <span> about Comment </span>
+            <Link to={`/comment/${target_comment?.id}`}>
+              {target_comment?.content}
+            </Link>
+            {reason && (
+              <span>
+                <div>reason: {reason}</div>
+              </span>
+            )}
+          </>
+        ),
+      };
+
+    case "mod_warn_post":
+      return {
+        modlog,
+        moderator,
+        data: target_person && (
+          <>
+            <span>Warned </span>
+            <PersonListing
+              person={target_person}
+              myUserInfo={myUserInfo}
+              banned={false}
+              muted={false}
+            />
+            <span> about Post </span>
+            <Link to={`/post/${target_post?.id}`}>{target_post?.name}</Link>
+            {reason && (
+              <span>
+                <div>reason: {reason}</div>
+              </span>
+            )}
+          </>
+        ),
+      };
   }
 }
 
 const Filter = ({
-  filterType,
+  title,
   onChange,
   value,
   onSearch,
   options,
-  loading,
 }: {
-  filterType: FilterType;
-  onChange: (option: Choice) => void;
+  title: NoOptionI18nKeys;
+  onChange: (options: Choice[]) => void;
   value?: number | null;
   onSearch: (text: string) => void;
   options: Choice[];
   loading: boolean;
 }) => (
-  <div className="col-sm-6 mb-3">
-    <label className="mb-2" htmlFor={`filter-${filterType}`}>
-      {I18NextService.i18n.t(`filter_by_${filterType}`)}
-    </label>
-    <SearchableSelect
-      id={`filter-${filterType}`}
-      value={value ?? 0}
-      options={[
-        {
-          label: I18NextService.i18n.t("all") as string,
-          value: "0",
-        },
-      ].concat(options)}
-      onChange={onChange}
-      onSearch={onSearch}
-      loading={loading}
-    />
-  </div>
+  <FilterChipSelect
+    label={title}
+    multiple={false}
+    allOptions={options}
+    selectedOptions={value ? [value.toString()] : []}
+    onSearch={onSearch}
+    onSelect={onChange}
+  />
 );
 
 async function createNewOptions({
@@ -604,14 +685,14 @@ async function createNewOptions({
     return oldOptions
       .filter(choice => parseInt(choice.value, 10) === id)
       .concat(
-        (await fetchUsers(text)).slice(0, fetchLimit).map(personToChoice),
+        (await searchUsers(text)).slice(0, fetchLimit).map(personToChoice),
       );
   } else {
     return oldOptions;
   }
 }
 
-type ModlogPathProps = { communityId?: string };
+type ModlogPathProps = Record<string, never>;
 type ModlogRouteProps = RouteComponentProps<ModlogPathProps> & ModlogProps;
 export type ModlogFetchConfig = IRoutePropsWithFetch<
   ModlogData,
@@ -628,8 +709,10 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
     communityRes: EMPTY_REQUEST,
     loadingModSearch: false,
     loadingUserSearch: false,
+    loadingCommunitySearch: false,
     userSearchOptions: [],
     modSearchOptions: [],
+    communitySearchOptions: [],
     isIsomorphic: false,
   };
 
@@ -637,11 +720,8 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
     return resourcesSettled([this.state.res]);
   }
 
-  constructor(props: ModlogRouteProps, context: any) {
+  constructor(props: ModlogRouteProps, context: object) {
     super(props, context);
-    this.handlePageChange = this.handlePageChange.bind(this);
-    this.handleUserChange = this.handleUserChange.bind(this);
-    this.handleModChange = this.handleModChange.bind(this);
 
     // Only fetch the data if coming from another route
     if (FirstLoadService.isFirstLoad) {
@@ -668,6 +748,15 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
           userSearchOptions: [personToChoice(userResponse.data.person_view)],
         };
       }
+
+      if (communityRes.state === "success") {
+        this.state = {
+          ...this.state,
+          communitySearchOptions: [
+            communityToChoice(communityRes.data.community_view),
+          ],
+        };
+      }
     }
   }
 
@@ -682,23 +771,19 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
     }
   }
 
-  componentWillReceiveProps(nextProps: ModlogRouteProps) {
-    this.fetchModlog(nextProps);
+  async componentWillReceiveProps(nextProps: ModlogRouteProps) {
+    await this.fetchModlog(nextProps);
 
     const reload = bareRoutePush(this.props, nextProps);
 
     if (nextProps.modId !== this.props.modId || reload) {
-      this.fetchMod(nextProps);
+      await this.fetchMod(nextProps);
     }
     if (nextProps.userId !== this.props.userId || reload) {
-      this.fetchUser(nextProps);
+      await this.fetchUser(nextProps);
     }
-    if (
-      nextProps.match.params.communityId !==
-        this.props.match.params.communityId ||
-      reload
-    ) {
-      this.fetchCommunity(nextProps);
+    if (nextProps.communityId !== this.props.communityId || reload) {
+      await this.fetchCommunity(nextProps);
     }
   }
 
@@ -738,34 +823,38 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
 
   get combined() {
     const res = this.state.res;
-    const combined = res.state === "success" ? res.data.modlog : [];
+    const combined = res.state === "success" ? res.data.items : [];
     const { myUserInfo } = this.isoData;
 
     return combined.map(i => {
       const {
-        modlog: { id, published_at },
+        modlog: { published_at },
         moderator,
         data,
       } = processModlogEntry(i, myUserInfo);
 
       return (
         <>
-          <div className="row" key={id}>
-            <div className={TIME_COLS}>
-              <MomentTime published={published_at} />
-            </div>
+          <div className="row">
+            <ResponsiveTableRowHeader title={"action"} />
+            <div className={ACTION_COLS}>{data}</div>
+            <ResponsiveTableRowHeader title={"mod"} />
             <div className={MOD_COLS}>
               {this.amAdminOrMod && moderator ? (
                 <PersonListing
                   person={moderator}
                   myUserInfo={myUserInfo}
                   banned={false}
+                  muted={false}
                 />
               ) : (
                 <div>{this.modOrAdminText(moderator)}</div>
               )}
             </div>
-            <div className={ACTION_COLS}>{data}</div>
+            <ResponsiveTableRowHeader title={"time"} />
+            <div className={TIME_COLS}>
+              <MomentTime published={published_at} />
+            </div>
           </div>
           <hr />
         </>
@@ -795,11 +884,13 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
     const {
       loadingModSearch,
       loadingUserSearch,
+      loadingCommunitySearch,
       userSearchOptions,
       modSearchOptions,
+      communitySearchOptions,
     } = this.state;
-    const { actionType, modId, userId } = this.props;
-    const { communityId } = this.props.match.params;
+    const { actionType, modId, userId, communityId, bulkActionParentId } =
+      this.props;
 
     const communityState = this.state.communityRes.state;
     const communityResp =
@@ -809,7 +900,7 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
       <div className="modlog container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
 
         <h1 className="h4 mb-4">{I18NextService.i18n.t("modlog")}</h1>
@@ -851,78 +942,53 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
             )}
           </h5>
         )}
-        <div className="row mb-2">
-          <div className="col-sm-6">
-            <select
-              value={actionType}
-              onChange={linkEvent(this, this.handleFilterActionChange)}
-              className="form-select"
-              aria-label="action"
-            >
-              <option disabled aria-hidden="true">
-                {I18NextService.i18n.t("filter_by_action")}
-              </option>
-              <option value={"all"}>{I18NextService.i18n.t("all")}</option>
-              <option value={"mod_remove_post"}>Removing Posts</option>
-              <option value={"mod_lock_post"}>Locking Posts</option>
-              <option value={"mod_lock_comment"}>Locking Comments</option>
-              <option value={"mod_feature_post_community"}>
-                Featuring Posts in Community
-              </option>
-              <option value={"admin_feature_post_site"}>
-                Featuring Posts for local Instance
-              </option>
-              <option value={"mod_remove_comment"}>Removing Comments</option>
-              <option value={"admin_remove_community"}>
-                Removing Communities
-              </option>
-              <option value={"admin_ban"}>Banning From Site</option>
-              <option value={"mod_ban_from_community"}>
-                Banning From Communities
-              </option>
-              <option value={"mod_add_to_community"}>
-                Adding Mod to Community
-              </option>
-              <option value={"mod_transfer_community"}>
-                Transferring Communities
-              </option>
-              <option value={"mod_change_community_visibility"}>
-                Changing Community visibility
-              </option>
-              <option value={"admin_add"}>Adding Admin to Site</option>
-              <option value={"admin_block_instance"}>
-                Blocking a federated Instance
-              </option>
-              <option value={"admin_allow_instance"}>
-                Allowing a federated Instance
-              </option>
-              <option value={"admin_purge_person"}>Purging a Person</option>
-              <option value={"admin_purge_community"}>
-                Purging a Community
-              </option>
-              <option value={"admin_purge_post"}>Purging a Post</option>
-              <option value={"admin_purge_comment"}>Purging a Comment</option>
-            </select>
-          </div>
-        </div>
-        <div className="row mb-2">
-          <Filter
-            filterType="user"
-            onChange={this.handleUserChange}
-            onSearch={this.handleSearchUsers}
-            value={userId}
-            options={userSearchOptions}
-            loading={loadingUserSearch}
-          />
-          {this.amAdminOrMod && (
-            <Filter
-              filterType="mod"
-              onChange={this.handleModChange}
-              onSearch={this.handleSearchMods}
-              value={modId}
-              options={modSearchOptions}
-              loading={loadingModSearch}
+        <div className="row row-cols-auto align-items-center g-3 mb-2">
+          <div className="col">
+            <ModlogKindFilterDropdown
+              currentOption={actionType}
+              onSelect={val => handleFilterActionChange(this, val)}
             />
+          </div>
+          <div className="col">
+            <Filter
+              title="all_users"
+              onChange={choices => handleUserChange(this, choices)}
+              onSearch={text => handleSearchUsers(this, text)}
+              value={userId}
+              options={userSearchOptions}
+              loading={loadingUserSearch}
+            />
+          </div>
+          <div className="col">
+            <Filter
+              title="all_communities"
+              onChange={choices => handleCommunityChange(this, choices)}
+              onSearch={text => handleSearchCommunities(this, text)}
+              value={communityId}
+              options={communitySearchOptions}
+              loading={loadingCommunitySearch}
+            />
+          </div>
+          {this.amAdminOrMod && (
+            <div className="col">
+              <Filter
+                title="all_mods"
+                onChange={choices => handleModChange(this, choices)}
+                onSearch={text => handleSearchMods(this, text)}
+                value={modId}
+                options={modSearchOptions}
+                loading={loadingModSearch}
+              />
+            </div>
+          )}
+          {bulkActionParentId && (
+            <div className="col">
+              <FilterChipCheckbox
+                option="children_for_modlog_item"
+                isChecked={false}
+                onCheck={_ => handleClearBulkActionParentId(this)}
+              />
+            </div>
           )}
         </div>
         {this.renderModlogTable()}
@@ -930,7 +996,7 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
     );
   }
 
-  renderModlogTable() {
+  renderModlogTable(): InfernoNode | void {
     switch (this.state.res.state) {
       case "loading":
         return (
@@ -942,24 +1008,26 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
         return (
           <>
             <div id="modlog_table">
-              <div className="row">
-                <div className={`${TIME_COLS} fw-bold`}>
-                  {I18NextService.i18n.t("time")}
+              <div className="d-none d-md-block">
+                <div className="row">
+                  <div className={`${ACTION_COLS} fw-bold`}>
+                    {I18NextService.i18n.t("action")}
+                  </div>
+                  <div className={`${MOD_COLS} fw-bold`}>
+                    {I18NextService.i18n.t("mod")}
+                  </div>
+                  <div className={`${TIME_COLS} fw-bold`}>
+                    {I18NextService.i18n.t("time")}
+                  </div>
                 </div>
-                <div className={`${MOD_COLS} fw-bold`}>
-                  {I18NextService.i18n.t("mod")}
-                </div>
-                <div className={`${ACTION_COLS} fw-bold`}>
-                  {I18NextService.i18n.t("action")}
-                </div>
+                <TableHr />
               </div>
-              <TableHr />
               {this.combined}
             </div>
             <PaginatorCursor
               current={this.props.cursor}
               resource={this.state.res}
-              onPageChange={this.handlePageChange}
+              onPageChange={cursor => handlePageChange(this, cursor)}
             />
           </>
         );
@@ -970,108 +1038,47 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
   get modlogItemsCount(): number {
     const { res } = this.state;
 
-    return res.state === "success" ? res.data.modlog.length : 0;
+    return res.state === "success" ? res.data.items.length : 0;
   }
 
-  handleFilterActionChange(i: Modlog, event: any) {
-    let val = event.target.value;
-    if (val === "all") {
-      val = undefined;
-    }
-    i.updateUrl({
-      actionType: val as ModlogKind,
-      cursor: undefined,
-    });
-  }
-
-  handlePageChange(cursor?: DirectionalCursor) {
-    this.updateUrl({ cursor });
-  }
-
-  handleUserChange(option: Choice) {
-    this.updateUrl({
-      userId: getIdFromString(option.value),
-      cursor: undefined,
-    });
-  }
-
-  handleModChange(option: Choice) {
-    this.updateUrl({ modId: getIdFromString(option.value), cursor: undefined });
-  }
-
-  handleSearchUsers = debounce(async (text: string) => {
-    if (!text.length) {
-      return;
-    }
-
-    const { userId } = this.props;
-    const { userSearchOptions } = this.state;
-    this.setState({ loadingUserSearch: true });
-
-    const newOptions = await createNewOptions({
-      id: userId,
-      text,
-      oldOptions: userSearchOptions,
-    });
-
-    this.setState({
-      userSearchOptions: newOptions,
-      loadingUserSearch: false,
-    });
-  });
-
-  handleSearchMods = debounce(async (text: string) => {
-    if (!text.length) {
-      return;
-    }
-
-    const { modId } = this.props;
-    const { modSearchOptions } = this.state;
-    this.setState({ loadingModSearch: true });
-
-    const newOptions = await createNewOptions({
-      id: modId,
-      text,
-      oldOptions: modSearchOptions,
-    });
-
-    this.setState({
-      modSearchOptions: newOptions,
-      loadingModSearch: false,
-    });
-  });
-
-  async updateUrl(props: Partial<ModlogProps>) {
+  updateUrl(props: Partial<ModlogProps>) {
     const {
       actionType,
       modId,
       cursor,
       userId,
-      match: {
-        params: { communityId },
-      },
-    } = { ...this.props, ...props };
+      communityId,
+      bulkActionParentId,
+    } = {
+      ...this.props,
+      ...props,
+    };
 
     const queryParams: QueryParams<ModlogProps> = {
       cursor,
       actionType,
       modId: modId?.toString(),
       userId: userId?.toString(),
+      communityId: communityId?.toString(),
+      bulkActionParentId: bulkActionParentId?.toString(),
     };
 
-    this.props.history.push(
-      `/modlog${communityId ? `/${communityId}` : ""}${getQueryString(
-        queryParams,
-      )}`,
-    );
+    this.props.history.push(`/modlog${getQueryString(queryParams)}`);
   }
 
   fetchModlogToken?: symbol;
   async fetchModlog(props: ModlogRouteProps) {
     const token = (this.fetchModlogToken = Symbol());
-    const { actionType, cursor, modId, userId, postId, commentId } = props;
-    const { communityId: urlCommunityId } = props.match.params;
-    const communityId = getIdFromString(urlCommunityId);
+    const {
+      actionType,
+      cursor,
+      modId,
+      userId,
+      postId,
+      commentId,
+      communityId,
+      bulkActionParentId,
+    } = props;
 
     this.setState({ res: LOADING_REQUEST });
     const res = await HttpService.client.getModlog({
@@ -1082,7 +1089,8 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
       mod_person_id: modId,
       comment_id: commentId,
       post_id: postId,
-      ...cursorComponents(cursor),
+      bulk_action_parent_id: bulkActionParentId,
+      page_cursor: cursor,
     });
 
     if (token === this.fetchModlogToken) {
@@ -1093,8 +1101,7 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
   fetchCommunityToken?: symbol;
   async fetchCommunity(props: ModlogRouteProps) {
     const token = (this.fetchCommunityToken = Symbol());
-    const { communityId: urlCommunityId } = props.match.params;
-    const communityId = getIdFromString(urlCommunityId);
+    const { communityId } = props;
 
     if (communityId) {
       this.setState({ communityRes: LOADING_REQUEST });
@@ -1103,26 +1110,42 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
       });
       if (token === this.fetchCommunityToken) {
         this.setState({ communityRes });
+
+        if (communityRes.state === "success") {
+          this.setState({
+            communitySearchOptions: [
+              communityToChoice(communityRes.data.community_view),
+            ],
+          });
+        }
       }
     } else {
       this.setState({ communityRes: EMPTY_REQUEST });
     }
   }
 
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
-    query: { cursor, userId, modId, actionType, commentId, postId },
-    match: {
-      params: { communityId: urlCommunityId },
+    query: {
+      cursor,
+      userId,
+      modId,
+      actionType,
+      commentId,
+      postId,
+      communityId,
+      bulkActionParentId,
     },
-  }: InitialFetchRequest<ModlogPathProps, ModlogProps>): Promise<ModlogData> {
+  }: InitialFetchRequest<
+    ModlogPathProps,
+    ModlogProps
+  >): Promise<ModlogData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
-    const communityId = getIdFromString(urlCommunityId);
 
     const modlogForm: GetModlog = {
-      ...cursorComponents(cursor),
+      page_cursor: cursor,
       limit: fetchLimit,
       community_id: communityId,
       type_: actionType,
@@ -1130,6 +1153,7 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
       other_person_id: userId,
       comment_id: commentId,
       post_id: postId,
+      bulk_action_parent_id: bulkActionParentId,
     };
 
     let communityResponse: RequestState<GetCommunityResponse> = EMPTY_REQUEST;
@@ -1168,5 +1192,103 @@ export class Modlog extends Component<ModlogRouteProps, ModlogState> {
       modUserResponse,
       userResponse,
     };
+  };
+}
+
+function handleFilterActionChange(i: Modlog, actionType: ModlogKindFilter) {
+  i.updateUrl({
+    actionType,
+    cursor: undefined,
+  });
+}
+
+function handlePageChange(i: Modlog, cursor?: PaginationCursor) {
+  i.updateUrl({ cursor });
+}
+
+function handleUserChange(i: Modlog, options: Choice[]) {
+  i.updateUrl({
+    userId: getIdFromString(options[0].value),
+    cursor: undefined,
+  });
+}
+
+function handleCommunityChange(i: Modlog, options: Choice[]) {
+  i.updateUrl({
+    communityId: getIdFromString(options[0].value),
+    cursor: undefined,
+  });
+}
+
+function handleModChange(i: Modlog, options: Choice[]) {
+  i.updateUrl({ modId: getIdFromString(options[0].value), cursor: undefined });
+}
+
+const handleSearchUsers = debounce(async (i: Modlog, text: string) => {
+  if (!text.length) {
+    return;
   }
+
+  const { userId } = i.props;
+  const { userSearchOptions } = i.state;
+  i.setState({ loadingUserSearch: true });
+
+  const newOptions = await createNewOptions({
+    id: userId,
+    text,
+    oldOptions: userSearchOptions,
+  });
+
+  i.setState({
+    userSearchOptions: newOptions,
+    loadingUserSearch: false,
+  });
+});
+
+const handleSearchCommunities = debounce(async (i: Modlog, text: string) => {
+  if (!text.length) {
+    return;
+  }
+
+  const { communityId } = i.props;
+  const { communitySearchOptions } = i.state;
+  i.setState({ loadingCommunitySearch: true });
+
+  const newOptions = communitySearchOptions
+    .filter(choice => parseInt(choice.value, 10) === communityId)
+    .concat(
+      (await searchCommunities(text))
+        .slice(0, fetchLimit)
+        .map(communityToChoice),
+    );
+
+  i.setState({
+    communitySearchOptions: newOptions,
+    loadingCommunitySearch: false,
+  });
+});
+
+const handleSearchMods = debounce(async (i: Modlog, text: string) => {
+  if (!text.length) {
+    return;
+  }
+
+  const { modId } = i.props;
+  const { modSearchOptions } = i.state;
+  i.setState({ loadingModSearch: true });
+
+  const newOptions = await createNewOptions({
+    id: modId,
+    text,
+    oldOptions: modSearchOptions,
+  });
+
+  i.setState({
+    modSearchOptions: newOptions,
+    loadingModSearch: false,
+  });
+});
+
+function handleClearBulkActionParentId(i: Modlog) {
+  i.updateUrl({ bulkActionParentId: undefined, cursor: undefined });
 }

@@ -1,6 +1,6 @@
 import { capitalizeFirstLetter } from "@utils/helpers";
 import classNames from "classnames";
-import { Component, FormEventHandler, linkEvent } from "inferno";
+import { Component, FormEvent, FormEventHandler } from "inferno";
 import { EditSite, LocalSiteRateLimit } from "lemmy-js-client";
 import { I18NextService } from "../../services";
 import { Icon, Spinner } from "../common/icon";
@@ -16,6 +16,8 @@ const rateLimitTypes = [
   "import_user_settings",
 ] as const;
 
+export type RateLimitType = (typeof rateLimitTypes)[number];
+
 interface RateLimitsProps {
   handleRateLimit: FormEventHandler<HTMLInputElement>;
   handleRateLimitIntervalSeconds: FormEventHandler<HTMLInputElement>;
@@ -26,8 +28,8 @@ interface RateLimitsProps {
 
 interface RateLimitFormProps {
   rateLimits: LocalSiteRateLimit;
-  onSaveSite(form: EditSite): void;
   loading: boolean;
+  onSaveSite: (form: EditSite) => void;
 }
 
 interface RateLimitFormState {
@@ -74,14 +76,12 @@ function RateLimits({
 }
 
 function handleMaxRequestsChange(
-  {
-    rateLimitType,
-    ctx,
-  }: { rateLimitType: (typeof rateLimitTypes)[any]; ctx: RateLimitsForm },
-  event: any,
+  i: RateLimitsForm,
+  rateLimitType: RateLimitType,
+  event: FormEvent<HTMLInputElement>,
 ) {
   const limit: keyof RateLimitFormState["form"] = `${rateLimitType}_max_requests`;
-  ctx.setState(prev => ({
+  i.setState(prev => ({
     ...prev,
     form: {
       ...prev.form,
@@ -91,10 +91,11 @@ function handleMaxRequestsChange(
 }
 
 function handleIntervalSecondsChange(
-  { rateLimitType, ctx }: { rateLimitType: string; ctx: RateLimitsForm },
-  event: any,
+  i: RateLimitsForm,
+  rateLimitType: RateLimitType,
+  event: FormEvent<HTMLInputElement>,
 ) {
-  ctx.setState(prev => ({
+  i.setState(prev => ({
     ...prev,
     form: {
       ...prev.form,
@@ -103,7 +104,10 @@ function handleIntervalSecondsChange(
   }));
 }
 
-function submitRateLimitForm(i: RateLimitsForm, event: any) {
+function submitRateLimitForm(
+  i: RateLimitsForm,
+  event: FormEvent<HTMLFormElement>,
+) {
   event.preventDefault();
   const form: EditSite = Object.entries(i.state.form).reduce(
     (acc, [key, val]) => {
@@ -123,15 +127,11 @@ export default class RateLimitsForm extends Component<
   state: RateLimitFormState = {
     form: this.props.rateLimits,
   };
-  constructor(props: RateLimitFormProps, context: any) {
-    super(props, context);
-  }
-
   render() {
     return (
       <form
         className="rate-limit-form"
-        onSubmit={linkEvent(this, submitRateLimitForm)}
+        onSubmit={event => submitRateLimitForm(this, event)}
       >
         <h1 className="h4 mb-4">
           {I18NextService.i18n.t("rate_limit_header")}
@@ -149,14 +149,12 @@ export default class RateLimitsForm extends Component<
                 className={classNames("tab-pane show", {
                   active: isSelected,
                 })}
-                handleRateLimit={linkEvent(
-                  { rateLimitType, ctx: this },
-                  handleMaxRequestsChange,
-                )}
-                handleRateLimitIntervalSeconds={linkEvent(
-                  { rateLimitType, ctx: this },
-                  handleIntervalSecondsChange,
-                )}
+                handleRateLimit={event =>
+                  handleMaxRequestsChange(this, rateLimitType, event)
+                }
+                handleRateLimitIntervalSeconds={event =>
+                  handleIntervalSecondsChange(this, rateLimitType, event)
+                }
                 rateLimitValue={
                   this.state.form[`${rateLimitType}_max_requests`]
                 }
@@ -170,7 +168,7 @@ export default class RateLimitsForm extends Component<
         <div className="col-12 mb-3">
           <button
             type="submit"
-            className="btn btn-secondary me-2"
+            className="btn btn-light border-light-subtle me-2"
             disabled={this.props.loading}
           >
             {this.props.loading ? (

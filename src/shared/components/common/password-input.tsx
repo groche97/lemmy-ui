@@ -1,6 +1,6 @@
 import { Options, passwordStrength } from "check-password-strength";
 import classNames from "classnames";
-import { Component, FormEventHandler, linkEvent } from "inferno";
+import { Component, FormEventHandler } from "inferno";
 import { NavLink } from "inferno-router";
 import { I18NextService } from "../../services";
 import { Icon } from "./icon";
@@ -64,10 +64,6 @@ class PasswordInput extends Component<PasswordInputProps, PasswordInputState> {
     show: false,
   };
 
-  constructor(props: PasswordInputProps, context: any) {
-    super(props, context);
-  }
-
   render() {
     const {
       props: {
@@ -102,16 +98,14 @@ class PasswordInput extends Component<PasswordInputProps, PasswordInputState> {
                 onInput={onInput}
                 value={value}
                 required={required !== false}
-                pattern=".+"
+                pattern=".{10,60}"
                 title={I18NextService.i18n.t("invalid_password")}
-                minLength={10}
-                maxLength={60}
               />
               <button
-                className="btn btn-outline-dark"
+                className="btn btn-light border-light-subtle"
                 type="button"
                 id={id}
-                onClick={linkEvent(this, handleToggleShow)}
+                onClick={() => handleToggleShow(this)}
                 aria-label={I18NextService.i18n.t(
                   `${show ? "show" : "hide"}_password`,
                 )}

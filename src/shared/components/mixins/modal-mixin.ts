@@ -6,17 +6,12 @@ export function modalMixin<
   S,
   Base extends new (...args: any[]) => Component<P, S> & {
     readonly modalDivRef: RefObject<HTMLDivElement>;
-    handleShow?(): void;
-    handleHide?(): void;
+    handleShow?: () => void;
+    handleHide?: () => void;
   },
 >(base: Base, _context?: ClassDecoratorContext<Base>) {
   return class extends base {
     modal?: Modal;
-    constructor(...args: any[]) {
-      super(...args);
-      this.handleHide = this.handleHide?.bind(this);
-      this.handleShow = this.handleShow?.bind(this);
-    }
 
     private addModalListener(type: string, listener?: () => void) {
       if (listener) {
@@ -26,13 +21,13 @@ export function modalMixin<
 
     private removeModalListener(type: string, listener?: () => void) {
       if (listener) {
-        this.modalDivRef.current?.addEventListener(type, listener);
+        this.modalDivRef.current?.removeEventListener(type, listener);
       }
     }
 
-    componentDidMount() {
+    async componentDidMount() {
       // Keeping this sync to allow the super implementation to be sync
-      import("bootstrap/js/dist/modal").then(
+      await import("bootstrap/js/dist/modal").then(
         (res: { default: typeof Modal }) => {
           if (!this.modalDivRef.current) {
             return;
@@ -46,7 +41,7 @@ export function modalMixin<
           this.addModalListener("shown.bs.modal", this.handleShow);
           this.addModalListener("hidden.bs.modal", this.handleHide);
 
-          this.modal = new Modal(this.modalDivRef.current!);
+          this.modal = new Modal(this.modalDivRef.current);
 
           if (this.props.show) {
             this.modal.show();
@@ -66,7 +61,7 @@ export function modalMixin<
 
     componentWillReceiveProps(
       nextProps: Readonly<{ children?: InfernoNode } & P>,
-      nextContext: any,
+      nextContext: unknown,
     ) {
       if (nextProps.show !== this.props.show) {
         if (nextProps.show) {

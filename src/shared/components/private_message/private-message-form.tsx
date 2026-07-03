@@ -20,22 +20,16 @@ interface PrivateMessageFormProps {
   privateMessageView?: PrivateMessageView; // If a pm is given, that means this is an edit
   replyType?: boolean;
   myUserInfo: MyUserInfo | undefined;
-  onCancel?(): any;
-  onCreate?(
-    form: CreatePrivateMessage,
-    bypassNavWarning: () => void,
-  ): Promise<boolean>;
-  onEdit?(
-    form: EditPrivateMessage,
-    bypassNavWarning: () => void,
-  ): Promise<boolean>;
+  createOrEditLoading: boolean;
+  imageUploadDisabled: boolean;
+  onCancel?: () => void;
+  onCreate?: (form: CreatePrivateMessage, bypassNavWarning: () => void) => void;
+  onEdit?: (form: EditPrivateMessage, bypassNavWarning: () => void) => void;
 }
 
 interface PrivateMessageFormState {
   content?: string;
-  loading: boolean;
   previewMode: boolean;
-  submitted: boolean;
   bypassNavWarning?: boolean;
 }
 
@@ -44,21 +38,11 @@ export class PrivateMessageForm extends Component<
   PrivateMessageFormState
 > {
   state: PrivateMessageFormState = {
-    loading: false,
     previewMode: false,
     content: this.props.privateMessageView
       ? this.props.privateMessageView.private_message.content
       : undefined,
-    submitted: false,
   };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-
-    this.handleContentChange = this.handleContentChange.bind(this);
-    this.handlePrivateMessageSubmit =
-      this.handlePrivateMessageSubmit.bind(this);
-  }
 
   render() {
     return (
@@ -67,8 +51,7 @@ export class PrivateMessageForm extends Component<
           message={I18NextService.i18n.t("block_leaving")}
           when={
             !this.state.bypassNavWarning &&
-            ((!!this.state.content && !this.state.submitted) ||
-              this.state.loading)
+            (!!this.state.content || this.props.createOrEditLoading)
           }
         />
         {!this.props.privateMessageView && (
@@ -82,6 +65,7 @@ export class PrivateMessageForm extends Component<
                 person={this.props.recipient}
                 myUserInfo={this.props.myUserInfo}
                 banned={false}
+                muted={false}
               />
             </div>
           </div>
@@ -123,13 +107,13 @@ export class PrivateMessageForm extends Component<
           </label>
           <div className="col-sm-10">
             <MarkdownTextArea
-              onSubmit={this.handlePrivateMessageSubmit}
+              onSubmit={() => handlePrivateMessageSubmit(this)}
               initialContent={this.state.content}
-              onContentChange={this.handleContentChange}
+              onContentChange={val => handleContentChange(this, val)}
               allLanguages={[]}
               siteLanguages={[]}
               hideNavigationWarnings
-              onReplyCancel={() => this.handleCancel(this)}
+              onReplyCancel={() => handleCancel(this)}
               replyType={this.props.replyType}
               buttonTitle={
                 this.props.privateMessageView
@@ -137,53 +121,46 @@ export class PrivateMessageForm extends Component<
                   : capitalizeFirstLetter(I18NextService.i18n.t("send_message"))
               }
               myUserInfo={this.props.myUserInfo}
+              loading={this.props.createOrEditLoading}
+              imageUploadDisabled={this.props.imageUploadDisabled}
             />
           </div>
         </div>
       </form>
     );
   }
+}
 
-  async handlePrivateMessageSubmit(): Promise<boolean> {
-    this.setState({ loading: true, submitted: true });
-    const pm = this.props.privateMessageView;
-    const content = this.state.content ?? "";
-    let success: boolean | undefined;
-    if (pm) {
-      success = await this.props.onEdit?.(
-        {
-          private_message_id: pm.private_message.id,
-          content,
-        },
-        () => {
-          this.setState({ bypassNavWarning: true });
-        },
-      );
-    } else {
-      success = await this.props.onCreate?.(
-        {
-          content,
-          recipient_id: this.props.recipient.id,
-        },
-        () => {
-          this.setState({ bypassNavWarning: true });
-        },
-      );
-    }
-    this.setState({ loading: false, submitted: success ?? true });
-    return success ?? true;
+function handlePrivateMessageSubmit(i: PrivateMessageForm) {
+  const pm = i.props.privateMessageView;
+  const content = i.state.content ?? "";
+  if (pm) {
+    i.props.onEdit?.(
+      {
+        private_message_id: pm.private_message.id,
+        content,
+      },
+      () => {
+        i.setState({ bypassNavWarning: true });
+      },
+    );
+  } else {
+    i.props.onCreate?.(
+      {
+        content,
+        recipient_id: i.props.recipient.id,
+      },
+      () => {
+        i.setState({ bypassNavWarning: true });
+      },
+    );
   }
+}
 
-  handleContentChange(val: string) {
-    this.setState({ content: val });
-  }
+function handleContentChange(i: PrivateMessageForm, val: string) {
+  i.setState({ content: val });
+}
 
-  handleCancel(i: PrivateMessageForm) {
-    i.props.onCancel?.();
-  }
-
-  handlePreviewToggle(i: PrivateMessageForm, event: any) {
-    event.preventDefault();
-    i.setState({ previewMode: !i.state.previewMode });
-  }
+function handleCancel(i: PrivateMessageForm) {
+  i.props.onCancel?.();
 }

@@ -57,10 +57,10 @@ You can find more information in the [Backend Repository](https://github.com/Lem
 You need to have [pnpm](https://pnpm.io/installation) installed. Then run the following:
 
 ```bash
-git clone https://github.com/LemmyNet/lemmy-ui.git
+git clone https://github.com/LemmyNet/lemmy-ui.git --recursive
 cd lemmy-ui
 pnpm install
-LEMMY_UI_BACKEND_REMOTE=voyager.lemmy.ml pnpm dev
+LEMMY_UI_BACKEND=https://voyager.lemmy.ml pnpm dev
 ```
 
 Finally open `http://localhost:1234` in your browser. This uses the public test instance `https://voyager.lemmy.ml/` as backend. For more details such as developing with a locally compiled Lemmy backend, read the [documentation](https://join-lemmy.org/docs/contributors/01-overview.html).
@@ -69,15 +69,27 @@ Finally open `http://localhost:1234` in your browser. This uses the public test 
 
 The following environment variables can be used to configure lemmy-ui:
 
-| `ENV_VAR`                      | type     | default          | description                                                                         |
-| ------------------------------ | -------- | ---------------- | ----------------------------------------------------------------------------------- |
-| `LEMMY_UI_HOST`                | `string` | `0.0.0.0:1234`   | The IP / port that the lemmy-ui isomorphic node server is hosted at.                |
-| `LEMMY_UI_BACKEND_INTERNAL`    | `string` | `0.0.0.0:8536`   | The internal IP / port that lemmy is hosted at. Often `lemmy:8536` if using docker. |
-| `LEMMY_UI_BACKEND_EXTERNAL`    | `string` | `0.0.0.0:8536`   | The external IP / port that lemmy is hosted at. Often `DOMAIN.TLD`.                 |
-| `LEMMY_UI_BACKEND_REMOTE`      | `string` | `undefined`      | Domain of a remote Lemmy instance to connect for debugging purposes                 |
-| `LEMMY_UI_EXTRA_THEMES_FOLDER` | `string` | `./extra_themes` | A location for additional lemmy css themes.                                         |
-| `LEMMY_UI_DISABLE_CSP`         | `bool`   | `false`          | Disables CSP security headers                                                       |
-| `LEMMY_UI_CUSTOM_HTML_HEADER`  | `string` | `undefined`      | Injects a custom script into `<head>`.                                              |
+| `ENV_VAR`                      | type     | default            | description                                                                                                                        |
+| ------------------------------ | -------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `LEMMY_UI_HOST`                | `string` | `0.0.0.0:1234`     | The IP / port that the lemmy-ui isomorphic node server is hosted at.                                                               |
+| `LEMMY_UI_FRONTEND`            | `string` | `undefined`        | The base url where browsers can reach the lemmy-ui server, is inferred from request headers when undefined. (Protocol is optional) |
+| `LEMMY_UI_BACKEND`             | `string` | `localhost:8536`   | The base url for lemmy-ui in the browser to connect to the lemmy backend server. (Protocol is optional)                            |
+| `LEMMY_UI_BACKEND_INTERNAL`    | `string` | `LEMMY_UI_BACKEND` | The base url for the lemmy-ui server to connect to the lemmy backend server. (Protocol is optional)                                |
+| `LEMMY_UI_HTTPS`               | `bool`   | `false`            | Uses `https://` as the default protocol for base urls.                                                                             |
+| `LEMMY_UI_EXTRA_THEMES_FOLDER` | `string` | `./extra_themes`   | A location for additional lemmy css themes.                                                                                        |
+| `LEMMY_UI_DISABLE_CSP`         | `bool`   | `false`            | Disables CSP security headers                                                                                                      |
+| `LEMMY_UI_CUSTOM_HTML_HEADER`  | `string` | `undefined`        | Injects a custom script into `<head>`.                                                                                             |
+
+### Debugging
+
+These environment variables are for debugging purposes and are disabled by default for production builds, but can be enabled explicitly.
+
+| `ENV_VAR`                 | type   | default | evaluation | description                                                                                                           |
+| ------------------------- | ------ | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| `LEMMY_UI_ERUDA`          | `bool` | `true`  | runtime    | Enables Eruda, the console for mobile browsers. (In production Eruda partially violates the CSP, but remains useful.) |
+| `LEMMY_UI_SOURCE_MAPS`    | `bool` | `true`  | buildtime  | Gives browsers and node the ability to report accurate stack traces.                                                  |
+| `LEMMY_UI_SERVE_CSS_MAPS` | `bool` | `false` | runtime    | Serves `.css.map` files when requested. Map files are untracked, run `pnpm themes:build` to generate and update them. |
+| `LEMMY_UI_COMPRESSION`    | `bool` | `true`  | runtime    | Enables response body compression, useful to test on slow connections.                                                |
 
 ## Credits
 

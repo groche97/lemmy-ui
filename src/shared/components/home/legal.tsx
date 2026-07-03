@@ -3,13 +3,10 @@ import { Component } from "inferno";
 import { mdToHtml } from "@utils/markdown";
 import { I18NextService } from "../../services";
 import { HtmlTags } from "../common/html-tags";
+import { RouterContext } from "inferno-router";
 
-export class Legal extends Component<any, any> {
+export class Legal extends Component<object, object> {
   private isoData = setIsoData(this.context);
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
 
   get documentTitle(): string {
     return I18NextService.i18n.t("legal_information");
@@ -21,7 +18,7 @@ export class Legal extends Component<any, any> {
       <div className="legal container-lg">
         <HtmlTags
           title={this.documentTitle}
-          path={this.context.router.route.match.url}
+          context={this.context as RouterContext}
         />
         {legal && (
           <div

@@ -1,16 +1,19 @@
-import { linkEvent, Component } from "inferno";
+import { Component, FocusEvent, FormEvent } from "inferno";
 import { I18NextService } from "../../services/I18NextService";
 
 interface UrlListTextareaProps {
   urls: string[];
-  onUpdate(urls: string[]): void;
+  onUpdate: (urls: string[]) => void;
 }
 
 interface UrlListTextareaState {
   text: string;
 }
 
-function handleTextChange(i: UrlListTextarea, event: any) {
+function handleTextChange(
+  i: UrlListTextarea,
+  event: FormEvent<HTMLTextAreaElement>,
+) {
   i.setState({ text: event.target.value });
 }
 
@@ -20,7 +23,10 @@ function processUrl(str: string) {
   return new URL(str).toString().replace(URL_SCHEME, "");
 }
 
-function handleTextBlur(i: UrlListTextarea, event: any) {
+function handleTextBlur(
+  i: UrlListTextarea,
+  event: FocusEvent<HTMLTextAreaElement>,
+) {
   const inputValue: string = event.currentTarget?.value ?? "";
 
   const intermediateText = inputValue.replace(/\s+/g, "\n");
@@ -72,8 +78,8 @@ export default class UrlListTextarea extends Component<
             className="form-control"
             placeholder={I18NextService.i18n.t("block_urls_placeholder")}
             value={this.state.text}
-            onInput={linkEvent(this, handleTextChange)}
-            onBlur={linkEvent(this, handleTextBlur)}
+            onInput={event => handleTextChange(this, event)}
+            onBlur={event => handleTextBlur(this, event)}
             rows={4}
           />
         </div>

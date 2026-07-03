@@ -1,18 +1,18 @@
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps } from "inferno-router";
 import { RequestState } from "@services/HttpService";
-import { PaginationCursor, PostView } from "lemmy-js-client";
-import { DirectionalCursor, CursorComponents } from "./types";
+import { PostView } from "lemmy-js-client";
+import { Action } from "history";
+import { toUnicode } from "idna-uts46-hx";
 
 // Intended to allow reloading all the data of the current page by clicking the
 // navigation link of the current page.
-export function bareRoutePush<P extends RouteComponentProps<any>>(
-  prevProps: P,
-  nextProps: P,
-) {
+export function bareRoutePush<
+  P extends RouteComponentProps<Record<string, string>>,
+>(prevProps: P, nextProps: P) {
   return (
     prevProps.location.pathname === nextProps.location.pathname &&
     !nextProps.location.search &&
-    nextProps.history.action === "PUSH"
+    nextProps.history.action === Action.Push
   );
 }
 
@@ -20,7 +20,7 @@ export function capitalizeFirstLetter(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-export function debounce<T extends any[], R>(
+export function debounce<T extends unknown[], R>(
   func: (...e: T) => R,
   wait = 1000,
   immediate = false,
@@ -88,6 +88,7 @@ export function getQueryParams<PropsT, FallbacksT extends Empty = Empty>(
   for (const key in processors) {
     ret[key as string] = processors[key](
       searchParams.get(key) ?? undefined,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       fallbacks[key as string],
     );
   }
@@ -133,7 +134,9 @@ export function groupBy<T>(
 
 export function hostname(url: string): string {
   const cUrl = new URL(url);
-  return cUrl.port ? `${cUrl.hostname}:${cUrl.port}` : `${cUrl.hostname}`;
+  // Necessary to convert international hostnames to their unicode
+  const hostname: string = toUnicode(cUrl.hostname);
+  return cUrl.port ? `${hostname}:${cUrl.port}` : `${hostname}`;
 }
 
 export function hsl(num: number) {
@@ -157,7 +160,7 @@ export function sleep(millis: number): Promise<void> {
 /**
  * Polls / repeatedly runs a promise, every X milliseconds
  */
-export async function poll(promiseFn: any, millis: number) {
+export async function poll(promiseFn: () => Promise<void>, millis: number) {
   if (window.document.visibilityState !== "hidden") {
     await promiseFn();
   }
@@ -182,7 +185,7 @@ export function randomStr(
     .join("");
 }
 
-export function resourcesSettled(resources: RequestState<any>[]) {
+export function resourcesSettled(resources: RequestState<unknown>[]) {
   return resources.every(r => r.state === "success" || r.state === "failed");
 }
 
@@ -220,10 +223,10 @@ export function validURL(str: string) {
   }
 }
 
-export function dedupByProperty<
-  T extends Record<string, any>,
-  R extends number | string | boolean,
->(collection: T[], keyFn: (obj: T) => R) {
+export function dedupByProperty<T, R extends number | string | boolean>(
+  collection: T[],
+  keyFn: (obj: T) => R,
+) {
   return collection.reduce(
     (acc, cur) => {
       const key = keyFn(cur);
@@ -245,38 +248,13 @@ export function getApubName({ name, ap_id }: { name: string; ap_id: string }) {
   return `${name}@${hostname(ap_id)}`;
 }
 
-export function directionalCursor(
-  cursor: PaginationCursor,
-  back: boolean,
-): DirectionalCursor {
-  if (back) {
-    return `-${cursor}`;
-  }
-  return cursor;
-}
-
-export function cursorComponents(cursor?: DirectionalCursor): CursorComponents {
-  if (!cursor) {
-    return {
-      page_cursor: undefined,
-      page_back: undefined,
-    };
-  } else if (cursor.startsWith("-")) {
-    return {
-      page_cursor: cursor.substring(1),
-      page_back: true,
-    };
-  }
-  return {
-    page_cursor: cursor,
-    page_back: false,
-  };
-}
-
 export function unreadCommentsCount(pv: PostView): number | undefined {
-  const unread_comments =
-    pv.post.comments - (pv.post_actions?.read_comments_amount ?? 0);
-  return unread_comments === pv.post.comments || unread_comments === 0
+  const postComments = pv.post.comments;
+  const readComments = pv.post_actions?.read_comments_amount ?? 0;
+
+  // Hide if you haven't read any, or if you've read all the post comments
+  // Use >= because a post might have a comment removed.
+  return readComments >= postComments || readComments === 0
     ? undefined
-    : unread_comments;
+    : postComments - readComments;
 }

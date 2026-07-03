@@ -13,7 +13,7 @@ export function CrossPostButton(props: CrossPostParams): InfernoNode {
   const label = I18NextService.i18n.t("cross_post");
   return (
     <Link
-      className="btn btn-link d-flex align-items-center rounded-0 dropdown-item"
+      className="btn btn-sm border-light-subtle d-flex align-items-center rounded-0 dropdown-item"
       to={{
         pathname: "/create_post",
         state: props,
@@ -30,12 +30,21 @@ export function CrossPostButton(props: CrossPostParams): InfernoNode {
 
 type CreatePostButtonProps = {
   communityView?: CommunityView;
+  myUserInfo: MyUserInfo | undefined;
 };
-export function CreatePostButton({ communityView }: CreatePostButtonProps) {
-  const classes = classNames("btn btn-secondary d-block mb-2 w-100", {
-    "no-click":
-      communityView?.community.deleted || communityView?.community.removed,
-  });
+export function CreatePostButton({
+  communityView,
+  myUserInfo,
+}: CreatePostButtonProps) {
+  const classes = classNames(
+    "btn btn-light border-light-subtle d-block mb-2 w-100",
+    {
+      "no-click":
+        communityView?.community.deleted ||
+        communityView?.community.removed ||
+        userNotLoggedInOrBanned(myUserInfo),
+    },
+  );
 
   const link = communityView
     ? "/create_post" +
@@ -52,13 +61,17 @@ export function CreatePostButton({ communityView }: CreatePostButtonProps) {
 type CreateCommunityButtonProps = {
   localSite?: LocalSite;
   myUserInfo: MyUserInfo | undefined;
+  blockButton: boolean;
 };
 export function CreateCommunityButton({
   localSite,
   myUserInfo,
+  blockButton,
 }: CreateCommunityButtonProps) {
-  const classes = classNames("btn btn-secondary d-block mb-2 w-100", {
+  const classes = classNames({
     "no-click": !(localSite && canCreateCommunity(localSite, myUserInfo)),
+    "btn btn-light border-light-subtle d-block mb-2 w-100": blockButton,
+    "btn btn-sm btn-light border-light-subtle": !blockButton,
   });
 
   return (
@@ -70,12 +83,16 @@ export function CreateCommunityButton({
 
 type CreateMultiCommunityButtonProps = {
   myUserInfo: MyUserInfo | undefined;
+  blockButton: boolean;
 };
 export function CreateMultiCommunityButton({
   myUserInfo,
+  blockButton,
 }: CreateMultiCommunityButtonProps) {
-  const classes = classNames("btn btn-secondary d-block mb-2 w-100", {
+  const classes = classNames({
     "no-click": userNotLoggedInOrBanned(myUserInfo),
+    "btn btn-light border-light-subtle d-block mb-2 w-100": blockButton,
+    "btn btn-sm btn-light border-light-subtle": !blockButton,
   });
 
   return (

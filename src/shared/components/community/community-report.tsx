@@ -1,4 +1,4 @@
-import { Component, InfernoNode, linkEvent } from "inferno";
+import { Component } from "inferno";
 import { T } from "inferno-i18next-dess";
 import {
   Community,
@@ -8,48 +8,29 @@ import {
 } from "lemmy-js-client";
 import { mdToHtml } from "@utils/markdown";
 import { I18NextService } from "../../services";
-import { Icon, Spinner } from "../common/icon";
 import { PersonListing } from "../person/person-listing";
 import { tippyMixin } from "../mixins/tippy-mixin";
 import { CommunityHeader } from "./community-header";
+import ActionButton from "@components/common/content-actions/action-button";
 
 interface Props {
   report: CommunityReportView;
   myUserInfo: MyUserInfo | undefined;
-  onResolveReport(form: ResolveCommunityReport): void;
-}
-
-interface State {
   loading: boolean;
+  onResolveReport: (form: ResolveCommunityReport) => void;
 }
 
 const reportElements = [
   "name",
   "title",
-  "description",
+  "summary",
   "sidebar",
   "icon",
   "banner",
 ] as const;
 
 @tippyMixin
-export class CommunityReport extends Component<Props, State> {
-  state: State = {
-    loading: false, // when resolving
-  };
-
-  constructor(props: any, context: any) {
-    super(props, context);
-  }
-
-  componentWillReceiveProps(
-    nextProps: Readonly<{ children?: InfernoNode } & Props>,
-  ): void {
-    if (this.props !== nextProps) {
-      this.setState({ loading: false });
-    }
-  }
-
+export class CommunityReport extends Component<Props, object> {
   render() {
     const r = this.props.report;
     const cr = r.community_report;
@@ -70,9 +51,7 @@ export class CommunityReport extends Component<Props, State> {
           urlCommunityName={r.community.name}
           myUserInfo={this.props.myUserInfo}
         />
-        {mergedCommunity.description && (
-          <div>{mergedCommunity.description}</div>
-        )}
+        {mergedCommunity.summary && <div>{mergedCommunity.summary}</div>}
         {mergedCommunity.sidebar && (
           <div
             className="md-div"
@@ -87,6 +66,7 @@ export class CommunityReport extends Component<Props, State> {
             person={r.creator}
             banned={false}
             myUserInfo={this.props.myUserInfo}
+            muted={false}
           />
         </div>
         <div>
@@ -101,6 +81,7 @@ export class CommunityReport extends Component<Props, State> {
                   person={r.resolver}
                   banned={false}
                   myUserInfo={this.props.myUserInfo}
+                  muted={false}
                 />
               </T>
             ) : (
@@ -110,38 +91,31 @@ export class CommunityReport extends Component<Props, State> {
                   person={r.resolver}
                   banned={false}
                   myUserInfo={this.props.myUserInfo}
+                  muted={false}
                 />
               </T>
             )}
           </div>
         )}
-        <button
-          className="btn btn-link btn-animate text-muted py-0"
-          onClick={linkEvent(this, this.handleResolveReport)}
-          data-tippy-content={tippyContent}
-          aria-label={tippyContent}
-        >
-          {this.state.loading ? (
-            <Spinner />
-          ) : (
-            <Icon
-              icon="check"
-              classes={`icon-inline ${
-                cr.resolved ? "text-success" : "text-danger"
-              }`}
-            />
-          )}
-        </button>
+        <div className="mt-2">
+          <ActionButton
+            label={tippyContent}
+            icon={r.community_report.resolved ? "check" : "x"}
+            loading={this.props.loading}
+            inlineWithText
+            onClick={() => handleResolveReport(this)}
+            iconClass={`text-${r.community_report.resolved ? "success" : "danger"}`}
+          />
+        </div>
       </div>
     );
   }
+}
 
-  handleResolveReport(i: CommunityReport) {
-    i.setState({ loading: true });
-    const cr = i.props.report.community_report;
-    i.props.onResolveReport({
-      report_id: cr.id,
-      resolved: !cr.resolved,
-    });
-  }
+function handleResolveReport(i: CommunityReport) {
+  const cr = i.props.report.community_report;
+  i.props.onResolveReport({
+    report_id: cr.id,
+    resolved: !cr.resolved,
+  });
 }

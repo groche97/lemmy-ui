@@ -1,9 +1,9 @@
 import {
   Component,
+  FormEvent,
   InfernoNode,
   RefObject,
   createRef,
-  linkEvent,
 } from "inferno";
 import { I18NextService } from "@services/I18NextService";
 import { Spinner } from "@components/common/icon";
@@ -17,12 +17,12 @@ interface PersonNoteModalProps {
   note?: string;
   personId: PersonId;
   show: boolean;
-  onSubmit(form: NotePerson): void;
-  onCancel(): void;
+  loading: boolean;
+  onSubmit: (form: NotePerson) => void;
+  onCancel: () => void;
 }
 
 interface PersonNoteModalState {
-  loading: boolean;
   note?: string;
 }
 
@@ -35,21 +35,18 @@ export default class PersonNoteModal extends Component<
   readonly yesButtonRef: RefObject<HTMLButtonElement>;
   modal?: Modal;
   state: PersonNoteModalState = {
-    loading: false,
     note: this.props.note,
   };
 
-  constructor(props: PersonNoteModalProps, context: any) {
+  constructor(props: PersonNoteModalProps, context: object) {
     super(props, context);
 
     this.modalDivRef = createRef();
     this.yesButtonRef = createRef();
-
-    this.handleDismiss = this.handleDismiss.bind(this);
   }
 
   render() {
-    const btnText = this.state.loading ? (
+    const btnText = this.props.loading ? (
       <Spinner />
     ) : (
       I18NextService.i18n.t("save")
@@ -81,7 +78,7 @@ export default class PersonNoteModal extends Component<
             <div className="modal-body text-center align-middle text-body">
               <form
                 id={formId}
-                onSubmit={linkEvent(this, handleSubmit)}
+                onSubmit={event => handleSubmit(this, event)}
                 className="mb-3"
               >
                 <input
@@ -89,16 +86,16 @@ export default class PersonNoteModal extends Component<
                   className="form-control"
                   placeholder={I18NextService.i18n.t("create_user_note")}
                   value={this.state.note}
-                  onInput={linkEvent(this, handleNoteChange)}
+                  onInput={event => handleNoteChange(this, event)}
                 />
               </form>
             </div>
             <footer className="modal-footer">
               <button
                 type="submit"
-                className="btn btn-secondary me-3"
+                className="btn btn-light border-light-subtle me-3"
                 form={formId}
-                disabled={disableForm || this.state.loading}
+                disabled={disableForm || this.props.loading}
               >
                 {btnText}
               </button>
@@ -106,7 +103,7 @@ export default class PersonNoteModal extends Component<
                 type="button"
                 className="btn btn-light"
                 onClick={this.props.onCancel}
-                disabled={this.state.loading}
+                disabled={this.props.loading}
               >
                 {I18NextService.i18n.t("cancel")}
               </button>
@@ -117,24 +114,21 @@ export default class PersonNoteModal extends Component<
     );
   }
 
-  handleShow() {
-    this.yesButtonRef.current?.focus();
-  }
-
   handleDismiss() {
     this.props.onCancel();
     this.modal?.hide();
   }
 }
 
-function handleNoteChange(i: PersonNoteModal, event: any) {
+function handleNoteChange(
+  i: PersonNoteModal,
+  event: FormEvent<HTMLInputElement>,
+) {
   i.setState({ note: event.target.value });
 }
 
-function handleSubmit(i: PersonNoteModal, event: any) {
+function handleSubmit(i: PersonNoteModal, event: FormEvent<HTMLFormElement>) {
   event.preventDefault();
-
-  i.setState({ loading: true });
 
   // Empty string is a delete note
   const note = i.state.note ?? "";
@@ -142,9 +136,5 @@ function handleSubmit(i: PersonNoteModal, event: any) {
   i.props.onSubmit({
     note,
     person_id: i.props.personId,
-  });
-
-  i.setState({
-    loading: false,
   });
 }

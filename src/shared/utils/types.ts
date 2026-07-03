@@ -5,18 +5,19 @@ import {
   PersonContentType,
   PersonView,
   MyUserInfo,
-  PaginationCursor,
   CommentView,
   CommentSlimView,
   PersonId,
   Community,
 } from "lemmy-js-client";
 import { RequestState } from "@services/HttpService";
-import { Match } from "inferno-router/dist/Route";
+import { Match } from "inferno-router";
+import { InfernoNode } from "inferno";
 
 /**
  * This contains serialized data, it needs to be deserialized before use.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface IsoData<T extends RouteData = any> {
   path: string;
   routeData: T;
@@ -24,10 +25,11 @@ export interface IsoData<T extends RouteData = any> {
   myUserInfo?: MyUserInfo;
   errorPageData?: ErrorPageData;
   showAdultConsentModal: boolean;
-  lemmyExternalHost: string;
-  forceHttps: boolean;
+  lemmyBackend: string;
+  lemmyFrontend: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type IsoDataOptionalSite<T extends RouteData = any> = Partial<
   IsoData<T>
 > &
@@ -36,15 +38,20 @@ export type IsoDataOptionalSite<T extends RouteData = any> = Partial<
 declare global {
   interface Window {
     isoData: IsoDataOptionalSite;
-    checkLazyScripts?: () => void;
+    checkLazyScripts?: () => Promise<void>;
   }
   interface String {
     toLowerCase<T extends string>(this: T): Lowercase<T>;
+  }
+  /* eslint-disable-next-line @typescript-eslint/no-namespace */
+  namespace JSX {
+    type Element = InfernoNode;
   }
 }
 
 export interface InitialFetchRequest<
   P extends Record<string, string> = Record<string, never>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   T extends Record<string, any> = Record<string, never>,
 > {
   path: string;
@@ -72,7 +79,7 @@ export type PostOrCommentType = "post" | "comment";
 
 export type BanType = "community" | "site";
 
-export type PersonDetailsView = "uploads" | PersonContentType;
+export type PersonDetailsContentType = "uploads" | PersonContentType;
 
 export type PurgeType = "person" | "community" | "post" | "comment";
 
@@ -110,12 +117,29 @@ export function isCommentNodeFull(
   return (node as CommentNodeFull).view.comment_view.post !== undefined;
 }
 
-export type RouteData = Record<string, RequestState<any>>;
+/** A helper type to set which comment is loading
+ *
+ * For comment creates, the comment id is the parent (or zero)
+ **/
+export type ItemIdAndRes<IdType, Response> = {
+  id: IdType;
+  res: RequestState<Response>;
+};
+
+/** Determines if the item is loading **/
+export function itemLoading<IdType, Response>(
+  idAndRes: ItemIdAndRes<IdType, Response>,
+): IdType | undefined {
+  return idAndRes.res.state === "loading" ? idAndRes.id : undefined;
+}
+
+export type RouteData = Record<string, RequestState<unknown>>;
 
 export interface Choice {
   value: string;
   label: string;
   disabled?: boolean;
+  selected?: boolean;
 }
 
 export interface CommunityTribute {
@@ -133,11 +157,12 @@ export interface PersonTribute {
   view: PersonView;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type QueryParams<T extends Record<string, any>> = {
   [key in keyof T]?: string;
 };
 
-export type RouteDataResponse<T extends Record<string, any>> = {
+export type RouteDataResponse<T extends Record<string, unknown>> = {
   [K in keyof T]: RequestState<T[K]>;
 };
 
@@ -174,19 +199,13 @@ export interface CrossPostParams {
   customThumbnailUrl?: string;
 }
 
+// TODO get rid
 export type StringBoolean = "true" | "false";
 
 export type ProviderToEdit = Omit<
   CreateOAuthProvider,
   "client_id" | "client_secret"
 >;
-
-export type DirectionalCursor = `${PaginationCursor}` | `-${PaginationCursor}`;
-
-export type CursorComponents = {
-  page_cursor?: PaginationCursor;
-  page_back?: boolean;
-};
 
 /**
  * Determines whether to simplify / remove cross-posts, and how to display them.
@@ -197,3 +216,8 @@ export type ShowCrossPostsType = "small" | "expanded" | "show_separately";
  * Whether the body is hidden, preview (for card view lists), or full.
  **/
 export type ShowBodyType = "hidden" | "preview" | "full";
+
+/**
+ * Determines whether to show the mark read in the actions dropdown, or the main bar (for notifications).
+ **/
+export type ShowMarkReadType = "hide" | "dropdown" | "main_bar";

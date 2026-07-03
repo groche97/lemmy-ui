@@ -17,6 +17,14 @@ import CodeThemeHandler from "./handlers/code-theme-handler";
 import { verifyDynamicImports } from "@utils/dynamic-imports";
 import cookieParser from "cookie-parser";
 import { setupMarkdown } from "@utils/markdown";
+import compression from "compression";
+import { enableResponseBodyCompression } from "./utils/dev-env";
+import {
+  FrontPageFeedHandler,
+  ProfileFeedHandler,
+  CommunityFeedHandler,
+  MultiCommunityFeedHandler,
+} from "./handlers/feed-handler";
 
 const server = express();
 server.use(cookieParser());
@@ -31,7 +39,9 @@ const [hostname, port] = (() => {
 
   const lastIndex = host.lastIndexOf(":");
   if (lastIndex === -1) {
-    throw "LEMMY_UI_HOST must contain hostname and port (e.g. `0.0.0.0:1234`)";
+    throw new Error(
+      "LEMMY_UI_HOST must contain hostname and port (e.g. `0.0.0.0:1234`)",
+    );
   } else {
     const hostname = host.slice(0, lastIndex);
     const port = host.slice(lastIndex + 1);
@@ -41,6 +51,12 @@ const [hostname, port] = (() => {
 
 server.use(express.json());
 server.use(express.urlencoded({ extended: false }));
+if (enableResponseBodyCompression) {
+  server.use(compression());
+}
+
+// To get the frontend protocol and host from X-Forwarded-* header
+server.set("trust proxy", true);
 
 const serverPath = path.resolve("./dist");
 
@@ -51,7 +67,7 @@ if (process.env["NODE_ENV"] === "development") {
   server.use(
     getStaticDir(),
     express.static(serverPath, {
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
       immutable: true,
     }),
   );
@@ -66,6 +82,11 @@ if (
   server.use(setDefaultCsp);
 }
 
+// Stop NodeJS from exiting on unhandled promise rejections. Browsers just log an error.
+process.on("unhandledRejection", (error: unknown) => {
+  console.error("Unhandled promise rejection:", error);
+});
+
 server.get("/.well-known/security.txt", SecurityHandler);
 server.get("/robots.txt", RobotsHandler);
 server.get("/service-worker.js", ServiceWorkerHandler);
@@ -73,10 +94,14 @@ server.get("/manifest.webmanifest", ManifestHandler);
 server.get("/css/themes/:name", ThemeHandler);
 server.get("/css/code-themes/:name", CodeThemeHandler);
 server.get("/css/themelist", ThemesListHandler);
+server.get(["/feed", "/.rss"], FrontPageFeedHandler);
+server.get(["/u/:name/feed", "/u/{:name}.rss"], ProfileFeedHandler);
+server.get(["/c/:name/feed", "/c/{:name}.rss"], CommunityFeedHandler);
+server.get(["/m/:name/feed", "/m/{:name}.rss"], MultiCommunityFeedHandler);
 server.get("/{*splat}", CatchAllHandler);
 
 const listener = server.listen(Number(port), hostname, () => {
-  verifyDynamicImports(true);
+  verifyDynamicImports(true).catch(error => console.error(error));
 
   setupMarkdown();
 

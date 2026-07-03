@@ -3,8 +3,10 @@ import {
   editPersonNotes,
   editPost,
   enableNsfw,
+  handleWarnPost,
   mixedToPostSortType,
   multiCommunityRSSUrl,
+  reportToast,
   setIsoData,
   updateCommunityBlock,
   updatePersonBlock,
@@ -14,17 +16,12 @@ import {
   getQueryString,
   resourcesSettled,
   bareRoutePush,
-  cursorComponents,
 } from "@utils/helpers";
 import { scrollMixin } from "../mixins/scroll-mixin";
-import type {
-  DirectionalCursor,
-  QueryParams,
-  StringBoolean,
-} from "@utils/types";
-import { RouteDataResponse } from "@utils/types";
+import type { ItemIdAndRes, QueryParams } from "@utils/types";
+import { itemLoading, RouteDataResponse } from "@utils/types";
 import { Component, InfernoNode, RefObject, createRef } from "inferno";
-import { RouteComponentProps } from "inferno-router/dist/Route";
+import { RouteComponentProps, RouterContext } from "inferno-router";
 import {
   AddAdmin,
   AddModToCommunity,
@@ -39,7 +36,8 @@ import {
   EditPost,
   FeaturePost,
   GetPosts,
-  GetPostsResponse,
+  PagedResponse,
+  PostView,
   GetSiteResponse,
   HidePost,
   LemmyHttp,
@@ -58,12 +56,11 @@ import {
   GetMultiCommunityResponse,
   GetMultiCommunity,
   FollowMultiCommunity,
-  UpdateMultiCommunity,
   PostListingMode,
   MultiCommunityResponse,
-  CommunityId,
-  MultiCommunityId,
-  CommunityView,
+  PaginationCursor,
+  PostId,
+  ModEditPost,
 } from "lemmy-js-client";
 import { relTags } from "@utils/config";
 import { InitialFetchRequest } from "@utils/types";
@@ -79,48 +76,58 @@ import { tippyMixin } from "../mixins/tippy-mixin";
 import { toast } from "@utils/app";
 import { HtmlTags } from "../common/html-tags";
 import { Icon, Spinner } from "../common/icon";
-import { PostSortSelect } from "../common/sort-select";
+import { PostSortDropdown } from "../common/sort-dropdown";
 import { PostListings } from "../post/post-listings";
 import { PaginatorCursor } from "../common/paginator-cursor";
 import { getHttpBaseInternal } from "../../utils/env";
 import { PostsLoadingSkeleton } from "../common/loading-skeleton";
 import { MultiCommunitySidebar } from "./multi-community-sidebar";
 import { IRoutePropsWithFetch } from "@utils/routes";
-import PostHiddenSelect from "../common/post-hidden-select";
 import { isBrowser } from "@utils/browser";
 import { nowBoolean } from "@utils/date";
-import { TimeIntervalSelect } from "@components/common/time-interval-select";
+import {
+  ALL_TIME_INTERVAL,
+  Interval,
+  intervalFromQuery,
+  intervalToSeconds,
+  secondsToLargestInterval,
+  TimeIntervalFilter,
+} from "@components/common/time-interval-filter";
 import { LoadingEllipses } from "@components/common/loading-ellipses";
 import { MultiCommunityLink } from "./multi-community-link";
-import { PostListingModeSelect } from "@components/common/post-listing-mode-select";
-import { MultiCommunityEntryForm } from "./multi-community-entry-form";
-import { CommunityLink } from "@components/community/community-link";
+import { PostListingModeDropdown } from "@components/common/post-listing-mode-dropdown";
+import { MultiCommunityEntryList } from "./multi-community-entry-form";
+import { FilterChipCheckbox } from "@components/common/filter-chip-checkbox";
+import { removeLocalStorageMarkdown } from "@components/common/markdown-textarea";
 
 type MultiCommunityData = RouteDataResponse<{
   multiCommunityRes: GetMultiCommunityResponse;
-  postsRes: GetPostsResponse;
+  postsRes: PagedResponse<PostView>;
 }>;
 
-interface State {
+type State = {
   multiCommunityRes: RequestState<GetMultiCommunityResponse>;
-  postsRes: RequestState<GetPostsResponse>;
+  postsRes: RequestState<PagedResponse<PostView>>;
+  followRes: RequestState<MultiCommunityResponse>;
+  votePostRes: ItemIdAndRes<PostId, PostResponse>;
   siteRes: GetSiteResponse;
   showSidebarMobile: boolean;
   isIsomorphic: boolean;
   markPageAsReadLoading: boolean;
   postListingMode: PostListingMode;
-}
+  selectButtonsHidden: boolean;
+};
 
 interface Props {
   sort: PostSortType;
-  postTimeRange: number;
-  cursor?: DirectionalCursor;
-  showHidden?: StringBoolean;
+  time: Interval;
+  cursor?: PaginationCursor;
+  showHidden?: boolean;
 }
 
 type Fallbacks = {
   sort: PostSortType;
-  postTimeRange: number;
+  time: Interval;
 };
 
 export function getMultiCommunityQueryParams(
@@ -134,14 +141,16 @@ export function getMultiCommunityQueryParams(
     {
       cursor: (cursor?: string) => cursor,
       sort: getSortTypeFromQuery,
-      postTimeRange: getPostTimeRangeFromQuery,
-      showHidden: (include?: StringBoolean) => include,
+      time: intervalFromQuery,
+      showHidden: getShowHiddenFromQuery,
     },
     source,
     {
       sort:
         local_user?.default_post_sort_type ?? local_site.default_post_sort_type,
-      postTimeRange: local_user?.default_post_time_range_seconds ?? 0,
+      time:
+        secondsToLargestInterval(local_user?.default_post_time_range_seconds) ??
+        ALL_TIME_INTERVAL,
     },
   );
 }
@@ -153,11 +162,8 @@ function getSortTypeFromQuery(
   return type ? (type as PostSortType) : fallback;
 }
 
-function getPostTimeRangeFromQuery(
-  type: string | undefined,
-  fallback: number,
-): number {
-  return type ? Number(type) : fallback;
+function getShowHiddenFromQuery(hidden: string | undefined): boolean {
+  return hidden === "true";
 }
 
 type PathProps = { name: string };
@@ -175,11 +181,14 @@ export class MultiCommunity extends Component<RouteProps, State> {
   state: State = {
     multiCommunityRes: EMPTY_REQUEST,
     postsRes: EMPTY_REQUEST,
+    followRes: EMPTY_REQUEST,
+    votePostRes: { id: 0, res: EMPTY_REQUEST },
     siteRes: this.isoData.siteRes,
     showSidebarMobile: false,
     isIsomorphic: false,
     markPageAsReadLoading: false,
     postListingMode: defaultPostListingMode(this.isoData),
+    selectButtonsHidden: true,
   };
   private readonly mainContentRef: RefObject<HTMLDivElement>;
 
@@ -190,7 +199,7 @@ export class MultiCommunity extends Component<RouteProps, State> {
     ]);
   }
 
-  constructor(props: RouteProps, context: any) {
+  constructor(props: RouteProps, context: object) {
     super(props, context);
 
     this.mainContentRef = createRef();
@@ -229,23 +238,23 @@ export class MultiCommunity extends Component<RouteProps, State> {
     }
   }
 
-  componentWillReceiveProps(
+  async componentWillReceiveProps(
     nextProps: RouteProps & { children?: InfernoNode },
   ) {
     if (
       bareRoutePush(this.props, nextProps) ||
       this.props.match.params.name !== nextProps.match.params.name
     ) {
-      this.fetchMultiCommunity(nextProps);
+      await this.fetchMultiCommunity(nextProps);
     }
-    this.fetchData(nextProps);
+    await this.fetchData(nextProps);
   }
 
-  static async fetchInitialData({
+  static fetchInitialData = async ({
     headers,
-    query: { cursor, sort, postTimeRange, showHidden },
+    query: { cursor, sort, time, showHidden },
     match: { params: props },
-  }: InitialFetchRequest<PathProps, Props>): Promise<MultiCommunityData> {
+  }: InitialFetchRequest<PathProps, Props>): Promise<MultiCommunityData> => {
     const client = wrapClient(
       new LemmyHttp(getHttpBaseInternal(), { headers }),
     );
@@ -257,12 +266,11 @@ export class MultiCommunity extends Component<RouteProps, State> {
 
     const getPostsForm: GetPosts = {
       multi_community_name: name,
-      ...cursorComponents(cursor),
       sort: mixedToPostSortType(sort),
-      time_range_seconds: postTimeRange,
+      time_range_seconds: intervalToSeconds(time),
       type_: "all",
-      show_hidden: showHidden === "true",
-      ...cursorComponents(cursor),
+      show_hidden: showHidden,
+      page_cursor: cursor,
     };
 
     const postsFetch = client.getPosts(getPostsForm);
@@ -278,7 +286,7 @@ export class MultiCommunity extends Component<RouteProps, State> {
       multiCommunityRes,
       postsRes,
     };
-  }
+  };
 
   get currentRes() {
     return this.state.postsRes;
@@ -300,16 +308,16 @@ export class MultiCommunity extends Component<RouteProps, State> {
         {res && (
           <HtmlTags
             title={this.documentTitle}
-            path={this.context.router.route.match.url}
+            context={this.context as RouterContext}
             canonicalPath={res.multi_community_view.multi.ap_id}
-            description={res.multi_community_view.multi.description}
+            description={res.multi_community_view.multi.summary}
           />
         )}
 
         {this.multiCommunityInfo()}
         <div className="d-block d-md-none">
           <button
-            className="btn btn-secondary d-inline-block mb-2 me-3"
+            className="btn btn-light border-light-subtle d-inline-block mb-2 me-3"
             onClick={() => handleShowSidebarMobile(this)}
           >
             {I18NextService.i18n.t("sidebar")}{" "}
@@ -362,13 +370,13 @@ export class MultiCommunity extends Component<RouteProps, State> {
 
     const haveUnread =
       postsRes.state === "success" &&
-      postsRes.data.posts.some(p => !p.post_actions?.read_at);
+      postsRes.data.items.some(p => !p.post_actions?.read_at);
 
     if (!haveUnread || !this.isoData.myUserInfo) return undefined;
     return (
       <div className="my-2">
         <button
-          className="btn btn-secondary"
+          className="btn btn-light border-light-subtle"
           onClick={() => handleMarkPageAsRead(this, this.isoData.myUserInfo)}
         >
           {I18NextService.i18n.t("mark_page_as_read")}
@@ -386,53 +394,42 @@ export class MultiCommunity extends Component<RouteProps, State> {
     return (
       <MultiCommunitySidebar
         multiCommunityView={res.multi_community_view}
-        editable
         myUserInfo={this.isoData.myUserInfo}
         onFollow={form => handleFollow(this, form)}
-        onEdit={form => handleEditMultiCommunity(this, form)}
+        followLoading={this.state.followRes.state === "loading"}
       />
     );
   }
 
   communities() {
-    if (this.state.multiCommunityRes.state !== "success") {
-      return undefined;
-    }
-    const res = this.state.multiCommunityRes.data;
-    const multiId = res.multi_community_view.multi.id;
-    const communities = res.communities;
+    const res =
+      this.state.multiCommunityRes.state === "success" &&
+      this.state.multiCommunityRes.data;
 
     const isCreator =
+      res &&
       this.isoData.myUserInfo?.local_user_view.person.id ===
-      res.multi_community_view.owner.id;
+        res.multi_community_view.owner.id;
 
     return (
-      <div className="card mb-3">
-        <div className="card-body">
-          <h5 className="card-title">{I18NextService.i18n.t("communities")}</h5>
-          <MultiCommunityEntryList
-            communities={communities}
-            isCreator={isCreator}
-            onDelete={communityId =>
-              handleDeleteMultiCommunityEntry(this, multiId, communityId)
-            }
-            myUserInfo={this.isoData.myUserInfo}
-          />
-          {isCreator && (
-            <MultiCommunityEntryForm
-              currentCommunities={communities}
-              onCreate={communityId =>
-                handleCreateMultiCommunityEntry(this, multiId, communityId)
-              }
+      res && (
+        <div className="card mb-3">
+          <div className="card-body">
+            <h5 className="card-title">
+              {I18NextService.i18n.t("communities")}
+            </h5>
+            <MultiCommunityEntryList
+              communities={res.communities}
+              isCreator={isCreator}
               myUserInfo={this.isoData.myUserInfo}
             />
-          )}
+          </div>
         </div>
-      </div>
+      )
     );
   }
 
-  listings() {
+  listings(): InfernoNode | void {
     const { siteRes, myUserInfo } = this.isoData;
 
     switch (this.state.postsRes.state) {
@@ -441,12 +438,13 @@ export class MultiCommunity extends Component<RouteProps, State> {
       case "success":
         return (
           <PostListings
-            posts={this.state.postsRes.data.posts}
+            posts={this.state.postsRes.data.items}
             showCrossPosts="small"
             showCommunity
+            multiCommunity
             viewOnly={false}
             postListingMode={this.state.postListingMode}
-            markable
+            showMarkRead="dropdown"
             enableNsfw={enableNsfw(siteRes)}
             showAdultConsentModal={this.isoData.showAdultConsentModal}
             allLanguages={siteRes.all_languages}
@@ -454,12 +452,18 @@ export class MultiCommunity extends Component<RouteProps, State> {
             myUserInfo={myUserInfo}
             localSite={siteRes.site_view.local_site}
             admins={this.isoData.siteRes.admins}
+            mutePersonName
+            muteCommunityName={false}
+            hideAvatar
+            voteLoading={itemLoading(this.state.votePostRes)}
             onBlockPerson={form => handleBlockPerson(form, myUserInfo)}
             onBlockCommunity={form => handleBlockCommunity(form, myUserInfo)}
             onPostEdit={form => handlePostEdit(this, form)}
+            onPostModEdit={form => handlePostModEdit(this, form)}
             onPostVote={form => handlePostVote(this, form)}
             onPostReport={form => handlePostReport(form)}
             onLockPost={form => handleLockPost(this, form)}
+            onWarnPost={form => handleWarnPost(form)}
             onDeletePost={form => handleDeletePost(this, form)}
             onRemovePost={form => handleRemovePost(this, form)}
             onSavePost={form => handleSavePost(this, form)}
@@ -512,46 +516,53 @@ export class MultiCommunity extends Component<RouteProps, State> {
   }
 
   selects() {
-    const { sort, postTimeRange, showHidden } = this.props;
+    const { sort, time, showHidden } = this.props;
+    const { selectButtonsHidden } = this.state;
 
-    const myUserInfo = this.isoData.myUserInfo;
+    const { myUserInfo } = this.isoData;
     const res =
       this.state.multiCommunityRes.state === "success" &&
       this.state.multiCommunityRes.data;
     const multiCommunityRss = res
       ? multiCommunityRSSUrl(res.multi_community_view.multi, sort)
       : undefined;
+    const hideTimeSelect = sort === "new" || sort === "old";
 
     return (
-      <div className="row align-items-center mb-3 g-3">
+      <div className="row row-cols-auto align-items-center g-3 mb-3">
         {this.isoData.myUserInfo && (
-          <div className="col-auto">
-            <PostHiddenSelect
-              showHidden={showHidden}
-              onShowHiddenChange={show => handleShowHiddenChange(this, show)}
+          <div className="col">
+            <FilterChipCheckbox
+              option={"show_hidden_posts"}
+              isChecked={showHidden ?? false}
+              onCheck={hidden => handleShowHiddenChange(this, hidden)}
             />
           </div>
         )}
-        <div className="col-auto">
-          <PostListingModeSelect
-            current={this.state.postListingMode}
-            onChange={val => handlePostListingModeChange(this, val, myUserInfo)}
+        <div className="col">
+          <PostListingModeDropdown
+            currentOption={this.state.postListingMode}
+            onSelect={val => handlePostListingModeChange(this, val, myUserInfo)}
+            showLabel
           />
         </div>
-        <div className="col-auto">
-          <PostSortSelect
-            current={mixedToPostSortType(sort)}
-            onChange={val => handleSortChange(this, val)}
+        <div className="col">
+          <PostSortDropdown
+            currentOption={mixedToPostSortType(sort)}
+            onSelect={val => handleSortChange(this, val)}
+            showLabel
           />
         </div>
-        <div className="col-6 col-md-3">
-          <TimeIntervalSelect
-            currentSeconds={postTimeRange}
-            onChange={seconds => handlePostTimeRangeChange(this, seconds)}
-          />
-        </div>
+        {!hideTimeSelect && (
+          <div className="col">
+            <TimeIntervalFilter
+              interval={time}
+              onChange={interval => handleTimeChange(this, interval)}
+            />
+          </div>
+        )}
         {multiCommunityRss && (
-          <>
+          <div className="col">
             <a href={multiCommunityRss} title="RSS" rel={relTags}>
               <Icon icon="rss" classes="text-muted small" />
             </a>
@@ -560,13 +571,21 @@ export class MultiCommunity extends Component<RouteProps, State> {
               type="application/atom+xml"
               href={multiCommunityRss}
             />
-          </>
+          </div>
+        )}
+        {myUserInfo && (
+          <button
+            className="col btn btn-ghost"
+            onClick={_ => handleHideSelectButtons(this)}
+          >
+            <Icon icon={`chevrons-${selectButtonsHidden ? "down" : "up"}`} />
+          </button>
         )}
       </div>
     );
   }
 
-  async updateUrl(props: Partial<Props>) {
+  updateUrl(props: Partial<Props>) {
     const {
       cursor,
       sort,
@@ -582,7 +601,7 @@ export class MultiCommunity extends Component<RouteProps, State> {
     const queryParams: QueryParams<Props> = {
       cursor,
       sort,
-      showHidden: showHidden,
+      showHidden: showHidden?.toString(),
     };
 
     this.props.history.push(`/m/${name}${getQueryString(queryParams)}`);
@@ -591,103 +610,22 @@ export class MultiCommunity extends Component<RouteProps, State> {
   fetchDataToken?: symbol;
   async fetchData(props: RouteProps) {
     const token = (this.fetchDataToken = Symbol());
-    const { cursor, sort, postTimeRange, showHidden } = props;
+    const { cursor, sort, time, showHidden } = props;
     const multi_community_name = decodeURIComponent(props.match.params.name);
 
     this.setState({ postsRes: LOADING_REQUEST });
     const postsRes = await HttpService.client.getPosts({
-      ...cursorComponents(cursor),
+      page_cursor: cursor,
       sort: mixedToPostSortType(sort),
-      time_range_seconds: postTimeRange,
+      time_range_seconds: intervalToSeconds(time),
       type_: "all",
       multi_community_name,
-      show_hidden: showHidden === "true",
+      show_hidden: showHidden,
     });
     if (token === this.fetchDataToken) {
       this.setState({ postsRes });
     }
   }
-}
-
-interface MultiCommunityEntryListProps {
-  communities: CommunityView[];
-  isCreator: boolean;
-  onDelete(communityId: CommunityId): void;
-  myUserInfo: MyUserInfo | undefined;
-}
-
-function MultiCommunityEntryList({
-  communities,
-  isCreator,
-  onDelete,
-  myUserInfo,
-}: MultiCommunityEntryListProps) {
-  return (
-    communities.length > 0 && (
-      <div id="multi-community-entry-table">
-        {communities.map(c => (
-          <>
-            <div
-              key={`multi-community-entry-${c.community.id}`}
-              className="row"
-            >
-              <div className="col-12">
-                <CommunityLink
-                  community={c.community}
-                  myUserInfo={myUserInfo}
-                />
-                {isCreator && (
-                  <button
-                    className="btn btn-sm btn-link"
-                    onClick={() => onDelete(c.community.id)}
-                  >
-                    <Icon icon={"x"} classes="icon-inline text-danger" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </>
-        ))}
-      </div>
-    )
-  );
-}
-
-async function handleCreateMultiCommunityEntry(
-  i: MultiCommunity,
-  id: MultiCommunityId,
-  community_id: CommunityId,
-) {
-  const res = await HttpService.client.createMultiCommunityEntry({
-    id,
-    community_id,
-  });
-
-  if (res.state === "success") {
-    toast(I18NextService.i18n.t("community_added"));
-  }
-
-  // Refetch to rebuild the community list
-  i.fetchMultiCommunity(i.props);
-  i.fetchData(i.props);
-}
-
-async function handleDeleteMultiCommunityEntry(
-  i: MultiCommunity,
-  id: MultiCommunityId,
-  community_id: CommunityId,
-) {
-  const res = await HttpService.client.deleteMultiCommunityEntry({
-    id,
-    community_id,
-  });
-
-  if (res.state === "success") {
-    toast(I18NextService.i18n.t("community_removed"), "danger");
-  }
-
-  i.fetchMultiCommunity(i.props);
-  i.fetchData(i.props);
 }
 
 async function handleAddModToCommunity(form: AddModToCommunity) {
@@ -698,8 +636,10 @@ async function handleAddModToCommunity(form: AddModToCommunity) {
 }
 
 async function handleFollow(i: MultiCommunity, form: FollowMultiCommunity) {
-  const res = await HttpService.client.followMultiCommunity(form);
-  updateMultiCommunity(i, res);
+  i.setState({ followRes: LOADING_REQUEST });
+  const followRes = await HttpService.client.followMultiCommunity(form);
+  i.setState({ followRes });
+  updateMultiCommunity(i, followRes);
 }
 
 async function handlePurgePerson(i: MultiCommunity, form: PurgePerson) {
@@ -732,16 +672,6 @@ async function handleBlockPerson(
   }
 }
 
-async function handleEditMultiCommunity(
-  i: MultiCommunity,
-  form: UpdateMultiCommunity,
-) {
-  const res = await HttpService.client.updateMultiCommunity(form);
-  updateMultiCommunity(i, res);
-
-  return res;
-}
-
 async function handleDeletePost(i: MultiCommunity, form: DeletePost) {
   const deleteRes = await HttpService.client.deletePost(form);
   findAndUpdatePost(i, deleteRes);
@@ -771,7 +701,7 @@ async function handleMarkPostAsRead(
   if (res.state === "success") {
     i.setState(s => {
       if (s.postsRes.state === "success") {
-        s.postsRes.data.posts.forEach(p => {
+        s.postsRes.data.items.forEach(p => {
           if (p.post.id === form.post_id && myUserInfo) {
             if (!p.post_actions) {
               p.post_actions = {};
@@ -791,17 +721,24 @@ async function handlePostEdit(i: MultiCommunity, form: EditPost) {
   return res;
 }
 
+async function handlePostModEdit(i: MultiCommunity, form: ModEditPost) {
+  const res = await HttpService.client.modEditPost(form);
+  findAndUpdatePost(i, res);
+  return res;
+}
+
 async function handlePostVote(i: MultiCommunity, form: CreatePostLike) {
-  const voteRes = await HttpService.client.likePost(form);
-  findAndUpdatePost(i, voteRes);
-  return voteRes;
+  i.setState({ votePostRes: { id: form.post_id, res: LOADING_REQUEST } });
+  const res = await HttpService.client.likePost(form);
+  i.setState({ votePostRes: { id: form.post_id, res } });
+  findAndUpdatePost(i, res);
+
+  return res;
 }
 
 async function handlePostReport(form: CreatePostReport) {
   const reportRes = await HttpService.client.createPostReport(form);
-  if (reportRes.state === "success") {
-    toast(I18NextService.i18n.t("report_created"));
-  }
+  reportToast(reportRes);
 }
 
 async function handleLockPost(i: MultiCommunity, form: LockPost) {
@@ -819,7 +756,7 @@ async function handleHidePost(
   if (hideRes.state === "success") {
     i.setState(prev => {
       if (prev.postsRes.state === "success" && myUserInfo) {
-        for (const post of prev.postsRes.data.posts.filter(
+        for (const post of prev.postsRes.data.items.filter(
           p => form.post_id === p.post.id,
         )) {
           if (!post.post_actions) {
@@ -842,10 +779,10 @@ async function handlePersonNote(i: MultiCommunity, form: NotePerson) {
   if (res.state === "success") {
     i.setState(s => {
       if (s.postsRes.state === "success") {
-        s.postsRes.data.posts = editPersonNotes(
+        s.postsRes.data.items = editPersonNotes(
           form.note,
           form.person_id,
-          s.postsRes.data.posts,
+          s.postsRes.data.items,
         );
       }
       toast(I18NextService.i18n.t(form.note ? "note_created" : "note_deleted"));
@@ -906,7 +843,7 @@ function updateBanFromCommunity(
   if (banRes.state === "success") {
     i.setState(s => {
       if (s.postsRes.state === "success") {
-        s.postsRes.data.posts
+        s.postsRes.data.items
           .filter(c => c.creator.id === banRes.data.person_view.person.id)
           .forEach(c => {
             c.creator_banned_from_community = banned;
@@ -926,7 +863,7 @@ function updateBan(
   if (banRes.state === "success") {
     i.setState(s => {
       if (s.postsRes.state === "success") {
-        s.postsRes.data.posts
+        s.postsRes.data.items
           .filter(c => c.creator.id === banRes.data.person_view.person.id)
           .forEach(c => (c.creator_banned = banned));
       }
@@ -951,23 +888,25 @@ function updateMultiCommunity(
 function purgeItem(i: MultiCommunity, purgeRes: RequestState<SuccessResponse>) {
   if (purgeRes.state === "success") {
     toast(I18NextService.i18n.t("purge_success"));
-    i.context.router.history.push(`/`);
+    const context = i.context as RouterContext;
+    context.router.history.push(`/`);
   }
 }
 
 function findAndUpdatePost(i: MultiCommunity, res: RequestState<PostResponse>) {
   i.setState(s => {
     if (s.postsRes.state === "success" && res.state === "success") {
-      s.postsRes.data.posts = editPost(
+      removeLocalStorageMarkdown();
+      s.postsRes.data.items = editPost(
         res.data.post_view,
-        s.postsRes.data.posts,
+        s.postsRes.data.items,
       );
     }
     return s;
   });
 }
 
-function handlePageChange(i: MultiCommunity, cursor?: DirectionalCursor) {
+function handlePageChange(i: MultiCommunity, cursor?: PaginationCursor) {
   i.updateUrl({ cursor });
 }
 
@@ -975,13 +914,13 @@ function handleSortChange(i: MultiCommunity, sort: PostSortType) {
   i.updateUrl({ sort, cursor: undefined });
 }
 
-function handlePostTimeRangeChange(i: MultiCommunity, val: number) {
-  i.updateUrl({ postTimeRange: val, cursor: undefined });
+function handleTimeChange(i: MultiCommunity, val: Interval) {
+  i.updateUrl({ time: val, cursor: undefined });
 }
 
-function handleShowHiddenChange(i: MultiCommunity, show?: StringBoolean) {
+function handleShowHiddenChange(i: MultiCommunity, showHidden: boolean) {
   i.updateUrl({
-    showHidden: show,
+    showHidden,
     cursor: undefined,
   });
 }
@@ -1000,20 +939,20 @@ async function handleMarkPageAsRead(
 
   const post_ids =
     postsRes.state === "success" &&
-    postsRes.data.posts
+    postsRes.data.items
       .filter(p => !p.post_actions?.read_at)
       .map(p => p.post.id);
 
   if (post_ids && post_ids.length) {
     i.setState({ markPageAsReadLoading: true });
-    const res = await HttpService.client.markManyPostAsRead({
+    const res = await HttpService.client.markManyPostsAsRead({
       post_ids,
       read: true,
     });
     if (res.state === "success") {
       i.setState(s => {
         if (s.postsRes.state === "success") {
-          s.postsRes.data.posts.forEach(p => {
+          s.postsRes.data.items.forEach(p => {
             if (post_ids.includes(p.post.id) && myUserInfo) {
               if (!p.post_actions) {
                 p.post_actions = {};
@@ -1028,4 +967,8 @@ async function handleMarkPageAsRead(
       i.setState({ markPageAsReadLoading: false });
     }
   }
+}
+
+function handleHideSelectButtons(i: MultiCommunity) {
+  i.setState({ selectButtonsHidden: !i.state.selectButtonsHidden });
 }

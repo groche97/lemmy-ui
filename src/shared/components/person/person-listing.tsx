@@ -1,4 +1,4 @@
-import { hideAnimatedImage, hideImages, showAvatars } from "@utils/app";
+import { hideAnimatedImage, showAvatars, showMedia } from "@utils/app";
 import { hostname } from "@utils/helpers";
 import classNames from "classnames";
 import { Link } from "inferno-router";
@@ -13,7 +13,7 @@ interface PersonListingProps {
   banned: boolean;
   realLink?: boolean;
   useApubName?: boolean;
-  muted?: boolean;
+  muted: boolean;
   hideAvatar?: boolean;
   showApubName?: boolean;
   badgeForPostCreator?: boolean;
@@ -97,18 +97,22 @@ function AvatarAndName({
   });
   const hideAvatar_ =
     // Hide the avatar if you have hide images on
-    hideImages(hideAvatar ?? false, myUserInfo) ||
+    hideAvatar ||
     // Or its an animated image
     hideAnimatedImage(avatar ?? "", myUserInfo) ||
     // Or you have hide avatars in your user settings
-    !showAvatars(myUserInfo);
+    !showAvatars(myUserInfo) ||
+    // Or you have hide media in your user settings
+    !showMedia(myUserInfo);
 
   return (
-    <>
-      {!hideAvatar_ && !banned && avatar && <PictrsImage src={avatar} icon />}
+    <span className="overflow-wrap-anywhere">
+      {!hideAvatar_ && !banned && avatar && (
+        <PictrsImage src={avatar} type="icon" />
+      )}
       <span className={nameClasses}>{name}</span>
       {serverStr && <small className="text-muted">{serverStr}</small>}
-    </>
+    </span>
   );
 }
 
