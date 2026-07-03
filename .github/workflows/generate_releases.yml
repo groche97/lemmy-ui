@@ -1,0 +1,50 @@
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+jobs:
+
+  cache-and-install:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get the version
+        id: get_version
+        run: echo "VERSION=$(echo $GITHUB_REF | cut -d / -f 3)" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Build
+        run: pnpm build:prod
+      
+      - name: Create artifact
+        run: tar -c --exclude='./.git' --exclude='./lemmy-translations/.git' -c ./* -f lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
+      - name: Show hash  
+        run: sha512sum lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
+      - name: Generate hash file
+        run: sha512sum lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar > lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar.sha512
+        
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar
+            lemmy-ui-${{ steps.get_version.outputs.VERSION }}.tar.sha512
