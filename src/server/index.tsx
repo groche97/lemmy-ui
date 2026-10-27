@@ -3,6 +3,7 @@
 import { getStaticDir } from "@utils/env";
 import { VERSION } from "../shared/version";
 import express from "express";
+import morgan from "morgan";
 import path from "path";
 import process from "process";
 import CatchAllHandler from "./handlers/catch-all-handler";
@@ -14,6 +15,7 @@ import ThemeHandler from "./handlers/theme-handler";
 import ThemesListHandler from "./handlers/themes-list-handler";
 import { setCacheControl, setDefaultCsp } from "./middleware";
 import CodeThemeHandler from "./handlers/code-theme-handler";
+import EmbedHandler from "./handlers/embed-handler";
 import { verifyDynamicImports } from "@utils/dynamic-imports";
 import cookieParser from "cookie-parser";
 import { setupMarkdown } from "@utils/markdown";
@@ -27,6 +29,14 @@ import {
 } from "./handlers/feed-handler";
 
 const server = express();
+// Log requests, skipping static asset paths to avoid log noise
+const logFormat =
+  process.env["NODE_ENV"] === "development" ? "dev" : "combined";
+server.use(
+  morgan(logFormat, {
+    skip: req => req.originalUrl.startsWith("/static/"),
+  }),
+);
 server.use(cookieParser());
 
 // Split given host into hostname and port on the last `:` character, so that it
@@ -74,6 +84,9 @@ if (process.env["NODE_ENV"] === "development") {
   server.use(setCacheControl);
 }
 
+// Embed pages have their own CSP and must be registered before the global CSP middleware
+server.get("/embed/post/:post_id", EmbedHandler);
+
 // Only set the CSP if not in debug mode
 if (
   !process.env["LEMMY_UI_DISABLE_CSP"] &&
@@ -91,8 +104,8 @@ server.get("/.well-known/security.txt", SecurityHandler);
 server.get("/robots.txt", RobotsHandler);
 server.get("/service-worker.js", ServiceWorkerHandler);
 server.get("/manifest.webmanifest", ManifestHandler);
-server.get("/css/themes/:name", ThemeHandler);
-server.get("/css/code-themes/:name", CodeThemeHandler);
+server.get(`${getStaticDir()}/css/themes/:name`, ThemeHandler);
+server.get(`${getStaticDir()}/css/code-themes/:name`, CodeThemeHandler);
 server.get("/css/themelist", ThemesListHandler);
 server.get(["/feed", "/.rss"], FrontPageFeedHandler);
 server.get(["/u/:name/feed", "/u/{:name}.rss"], ProfileFeedHandler);

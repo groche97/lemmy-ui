@@ -21,6 +21,7 @@ import markdown_it_ruby from "markdown-it-ruby";
 import markdown_it_sub from "markdown-it-sub";
 import markdown_it_sup from "markdown-it-sup";
 import markdown_it_highlightjs from "markdown-it-highlightjs/core";
+import markdown_it_cjk_friendly from "markdown-it-cjk-friendly";
 import { getStaticDir } from "./env";
 import mila from "markdown-it-link-attributes";
 import { buildPictrsSrc } from "@components/common/pictrs-image";
@@ -57,6 +58,11 @@ export function mdToHtmlNoImages(text: string, rerender: () => void) {
 
 export function mdToHtmlInline(text: string) {
   return { __html: mdLimited.renderInline(text) };
+}
+
+/** Replace spoiler blocks with a placeholder to prevent leaking into meta tags. */
+export function stripSpoilers(text: string, replacement: string): string {
+  return text.replace(/::: spoiler [^]*?:::/g, replacement);
 }
 
 const spoilerConfig = {
@@ -184,6 +190,7 @@ export function setupMarkdown() {
     .use(markdown_it_ruby as PluginSimple)
     .use(localInstanceLinkParser)
     .use(markdown_it_bidi as PluginSimple)
+    .use(markdown_it_cjk_friendly)
     .use(mila as PluginSimple, milaAttrs);
   // .use(markdown_it_emoji, {
   //   defs: emojiDefs,

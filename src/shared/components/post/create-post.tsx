@@ -62,7 +62,7 @@ export interface CreatePostProps {
 }
 
 type CreatePostData = RouteDataResponse<{
-  communityResponse: GetCommunityResponse;
+  communityResponse?: GetCommunityResponse;
   initialCommunitiesRes: PagedResponse<CommunityView>;
 }>;
 
@@ -145,7 +145,7 @@ export class CreatePost extends Component<
       if (communityRes?.state === "success") {
         this.state = {
           ...this.state,
-          selectedCommunity: communityRes.data.community_view,
+          selectedCommunity: communityRes.data?.community_view,
         };
       }
     }
@@ -178,9 +178,7 @@ export class CreatePost extends Component<
         initialCommunitiesRes,
       });
 
-      if (
-        communityId?.toString() !== this.state.selectedCommunity?.community.id
-      ) {
+      if (communityId !== this.state.selectedCommunity?.community.id) {
         await this.fetchCommunity({ communityId });
       } else if (!communityId) {
         this.setState({
@@ -189,8 +187,7 @@ export class CreatePost extends Component<
       }
 
       const locationState = this.props.history.location.state as
-        | CrossPostParams
-        | undefined;
+        CrossPostParams | undefined;
       if (locationState) {
         await this.updateUrl({
           title: locationState.name,
@@ -391,7 +388,9 @@ export class CreatePost extends Component<
   sidebar(): InfernoNode | void {
     const communityRes = this.isoData.routeData.communityResponse;
     const moderators =
-      communityRes.state === "success" ? communityRes.data.moderators : [];
+      communityRes?.state === "success"
+        ? (communityRes.data?.moderators ?? [])
+        : [];
 
     if (this.state.selectedCommunity) {
       return (

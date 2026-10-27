@@ -1,4 +1,4 @@
-import { editRegistrationApplication, setIsoData } from "@utils/app";
+import { setIsoData } from "@utils/app";
 import {
   getQueryParams,
   getQueryString,
@@ -23,7 +23,11 @@ import {
 } from "lemmy-js-client";
 import { fetchLimit } from "@utils/config";
 import { InitialFetchRequest } from "@utils/types";
-import { FirstLoadService, I18NextService } from "../../services";
+import {
+  FirstLoadService,
+  I18NextService,
+  UnreadCounterService,
+} from "../../services";
 import {
   EMPTY_REQUEST,
   HttpService,
@@ -33,6 +37,7 @@ import {
 } from "../../services/HttpService";
 import { HtmlTags } from "../common/html-tags";
 import { Spinner } from "../common/icon";
+import { ListView } from "../common/list-view";
 import { RegistrationApplication } from "../common/registration-application";
 import { getHttpBaseInternal } from "../../utils/env";
 import { isBrowser } from "@utils/browser";
@@ -158,8 +163,8 @@ export class RegistrationApplications extends Component<
     const apps = appsState === "success" && this.state.appsRes.data.items;
 
     return (
-      <div className="row">
-        <div className="col-12">
+      <div className="row fl-1">
+        <div className="col-12 d-flex flex-column fl-1">
           <HtmlTags
             title={this.documentTitle}
             context={this.context as RouterContext}
@@ -191,7 +196,7 @@ export class RegistrationApplications extends Component<
 
   render() {
     return (
-      <div className="registration-applications container-lg">
+      <div className="registration-applications container-lg d-flex flex-column fl-1">
         {this.renderApps()}
       </div>
     );
@@ -215,8 +220,9 @@ export class RegistrationApplications extends Component<
       apps = apps.filter(ra => !ra.creator_local_user.accepted_application);
     }
     return (
-      <div>
-        {apps.map(ra => (
+      <ListView
+        items={apps}
+        renderItem={ra => (
           <>
             <hr />
             <RegistrationApplication
@@ -231,8 +237,10 @@ export class RegistrationApplications extends Component<
               myUserInfo={this.isoData.myUserInfo}
             />
           </>
-        ))}
-      </div>
+        )}
+        emptyIcon="clipboard"
+        emptyTranslationKey="no_applications"
+      />
     );
   }
 
@@ -251,7 +259,7 @@ export class RegistrationApplications extends Component<
     return {
       listRegistrationApplicationsResponse: headers["Authorization"]
         ? await client.listRegistrationApplications({
-            unread_only: view === "unread",
+            unread_only: registrationStateFromQuery(view) === "unread",
             page_cursor: cursor,
             limit: fetchLimit,
           })
@@ -312,14 +320,14 @@ async function handleApproveApplication(
   const res = await HttpService.client.approveRegistrationApplication(form);
   i.setState({ approveRes: { id: form.id, res } });
 
-  i.setState(s => {
-    if (s.appsRes.state === "success" && res.state === "success") {
-      removeLocalStorageMarkdown();
-      s.appsRes.data.items = editRegistrationApplication(
-        res.data.registration_application,
-        s.appsRes.data.items,
-      );
-    }
-    return s;
-  });
+  if (res.state === "success") {
+    removeLocalStorageMarkdown();
+    UnreadCounterService.Instance.unreadApplicationCount.next(
+      Math.max(
+        0,
+        UnreadCounterService.Instance.unreadApplicationCount.value - 1,
+      ),
+    );
+    await i.refetch(i.props);
+  }
 }

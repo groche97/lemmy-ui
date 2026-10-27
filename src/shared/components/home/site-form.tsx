@@ -89,6 +89,7 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
       summary: site?.summary,
       sidebar: site?.sidebar,
       registration_mode: ls?.registration_mode,
+      max_invites_per_user_allowed: ls?.max_invites_per_user_allowed,
       oauth_registration: ls?.oauth_registration,
       community_creation_admin_only: ls?.community_creation_admin_only,
       post_upvotes: ls?.post_upvotes,
@@ -370,6 +371,31 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
             </div>
           </div>
         )}
+        {this.state.siteForm.registration_mode === "require_invitation" && (
+          <div className="mb-3 row">
+            <label
+              className="col-sm-4 col-form-label"
+              htmlFor="max-invites-per-user"
+            >
+              {I18NextService.i18n.t("max_invites_per_user_allowed")}
+            </label>
+            <div className="col-sm-8">
+              <input
+                type="number"
+                id="max-invites-per-user"
+                className="form-control"
+                min={0}
+                value={this.state.siteForm.max_invites_per_user_allowed ?? 0}
+                onInput={e =>
+                  handleMaxInvitesPerUserChange(this, e.target.value)
+                }
+              />
+              <small className="form-text text-body-secondary">
+                {I18NextService.i18n.t("max_invites_per_user_allowed_help")}
+              </small>
+            </div>
+          </div>
+        )}
         <div className="mb-3 row">
           <div className="col-12">
             <FilterChipCheckbox
@@ -436,6 +462,7 @@ export class SiteForm extends Component<SiteFormProps, SiteFormState> {
               option={"private_instance"}
               isChecked={this.state.siteForm.private_instance ?? false}
               onCheck={val => handleSitePrivateInstance(this, val)}
+              description="private_instance_description"
             />
           </div>
         </div>
@@ -775,6 +802,7 @@ function handleSubmit(i: SiteForm, event: FormEvent<HTMLFormElement>) {
       nsfw_content_disallowed: stateSiteForm.nsfw_content_disallowed,
       application_question: stateSiteForm.application_question,
       registration_mode: stateSiteForm.registration_mode,
+      max_invites_per_user_allowed: stateSiteForm.max_invites_per_user_allowed,
       oauth_registration: stateSiteForm.oauth_registration,
       email_verification_required: stateSiteForm.email_verification_required,
       private_instance: stateSiteForm.private_instance,
@@ -866,6 +894,12 @@ function handleSiteEnableNsfwChange(i: SiteForm, val: boolean) {
     newState.siteForm.content_warning = "";
   }
   i.setState(newState);
+}
+
+function handleMaxInvitesPerUserChange(i: SiteForm, val: string) {
+  i.setState(
+    s => ((s.siteForm.max_invites_per_user_allowed = Number(val) || 0), s),
+  );
 }
 
 function handleSiteRegistrationModeChange(i: SiteForm, val: RegistrationMode) {
